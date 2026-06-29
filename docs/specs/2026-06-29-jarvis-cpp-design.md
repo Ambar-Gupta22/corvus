@@ -1,6 +1,6 @@
 # jarvis-cpp — Strategy, Design & Roadmap (framework-first)
 
-> Working name `jarvis-cpp` is a placeholder (final library name TBD). "Jarvis" is reserved as the name of the later **demo assistant**, not the library.
+> Working name: **`corvus`** (namespace `corvus`, `#include <corvus/corvus.h>`, CMake target `corvus::corvus`). Final public name still TBD but `corvus` is the working identity in code. "Jarvis" is reserved for the later **demo assistant**, not the library.
 
 ## Context
 

@@ -1,0 +1,16 @@
+---
+Checks: >
+  bugprone-*,
+  cppcoreguidelines-*,
+  modernize-*,
+  performance-*,
+  readability-*,
+  -modernize-use-trailing-return-type,
+  -readability-identifier-length,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -readability-magic-numbers,
+  -cppcoreguidelines-pro-type-reinterpret-cast
+
+WarningsAsErrors: ''
+HeaderFilterRegex: 'include/corvus/.*'
+FormatStyle: file

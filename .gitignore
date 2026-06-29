@@ -1,0 +1,32 @@
+# Build
+build/
+out/
+cmake-build-*/
+*.o
+*.obj
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+CMakeUserPresets.json
+_deps/
+
+# Models / data (large)
+*.gguf
+*.bin
+*.db
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
+*.key

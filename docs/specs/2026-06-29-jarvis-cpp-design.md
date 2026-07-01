@@ -56,7 +56,7 @@ The original `extern "C" Tool* create_tool()` plugin seam returns a C++ vtable o
 - **Phase 1 — Core single-agent + cloud (Wk 2–4):** `LLMClient` + Anthropic (+OpenAI); `ToolCalling` strategy + ReAct fallback; Tool/Registry + built-in tools + **`makeTool` lambda adapter + schema helper** (user-defined tool path); Memory (InMemory + Sqlite); `Agent`/`AgentBuilder`; `run` + `runAsync` + cancel + streaming; retries + loop guard; tests. **Milestone: 12-line quickstart works against a real API.**
 - **Phase 2 — Local-first (Wk 5–6):** Ollama + llama.cpp backends; **GBNF** tool-call JSON; benchmark vs Python cold start; **RPi-5 fully-offline demo**.
 - **Phase 3 — MCP-native (Wk 7–8):** `McpClient` (stdio + HTTP/SSE) + tool adaptation. Demo: agent using an off-the-shelf MCP server with **zero custom tool code**.
-- **Phase 4 — Multi-agent orchestration (Wk 9–10):** Orchestrator + EventBus + routing + parallel exec; `PlanAndExecute`.
+- **Phase 4 — Multi-agent orchestration (Wk 9–10):** Orchestrator + EventBus + routing + parallel exec; `PlanAndExecute`; **tool access control** — a `ToolPolicy` / filtered-registry-view layer above the (still dumb) `ToolRegistry`, optionally tool **scopes** with execution-time denial + audit (e.g. coding agent gets GitHub, others don't, from a shared tool pool).
 - **Phase 5 — Flagship demos + extension (Wk 11–12):** ROS2 planner node; game-NPC; optional native **C-ABI** plugin example; `CONTRIBUTING.md`; 5 good-first-issues.
 - **Phase 6 — Launch (Wk 13–15):** README (benchmarks, GIFs, comparison); CI badge; MIT; v1.0.0 criteria; Show HN → r/cpp → ROS Discourse → Unreal → r/raspberry_pi → llama.cpp discussions; dev.to blog.
 - **Later / optional (post-1.0):** personal **Jarvis assistant** showcase — CLI → whisper.cpp voice → REST/phone → cloud.
@@ -76,3 +76,4 @@ The original `extern "C" Tool* create_tool()` plugin seam returns a C++ vtable o
 ## Open items
 - Final library name (parked).
 - Native in-process plugins vs **MCP-only** extension (leaning MCP-only).
+- Tool access control (RBAC): per-agent registries for now; `ToolPolicy`/scoped-access layer in Phase 4.

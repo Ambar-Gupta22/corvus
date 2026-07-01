@@ -104,6 +104,7 @@ Consolidated so future sessions don't assume these are settled:
 5. **Memory trimming** — history currently grows unbounded; needs a strategy before real context limits bite. "Keep last N" vs summarize old turns. Undecided.
 6. **Async execution** — using `std::async` (simple); a managed thread pool is deferred until proven necessary.
 7. **Branding/attribution** — LICENSE copyright is "corvus contributors" (placeholder); README has a `<you>` GitHub-URL placeholder. Fill in on first push.
+8. **Tool access control (RBAC)** — no access control in Phase 0; `ToolRegistry` is a dumb thread-safe map. Per-agent isolation works today by composition (each agent's builder gets only its allowed tools — an agent can't call a tool that isn't in its registry). A real policy layer (`ToolPolicy` / filtered-registry view, optionally tool **scopes** with execution-time denial + audit) is **Phase 4** (multi-agent orchestration). Keep the registry dumb; put policy in a thin layer above it.
 
 See the 👉 notes in [docs/phase-0-explained.md](docs/phase-0-explained.md) for the reasoning behind 3–6.
 

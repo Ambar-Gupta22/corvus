@@ -22,8 +22,9 @@ TEST_CASE("registry registers, finds, and lists tools") {
     CHECK(reg.has("a"));
     CHECK(reg.has("b"));
     CHECK_FALSE(reg.has("missing"));
-    CHECK(reg.get("a") != nullptr);
-    CHECK(reg.get("missing") == nullptr);
+    // Extra parens: keep doctest from trying to stringify a shared_ptr<Tool>.
+    CHECK((reg.get("a") != nullptr));
+    CHECK((reg.get("missing") == nullptr));
     CHECK(reg.all().size() == 2);
 }
 

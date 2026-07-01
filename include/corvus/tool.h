@@ -69,10 +69,8 @@ private:
 };
 
 // makeTool — author a tool in one expression, no class required.
-inline ToolPtr makeTool(std::string name, std::string description, std::string schema,
-                        FunctionTool::Fn fn) {
-    return std::make_shared<FunctionTool>(std::move(name), std::move(description),
-                                          std::move(schema), std::move(fn));
+inline ToolPtr makeTool(std::string name, std::string description, std::string schema, FunctionTool::Fn fn) {
+    return std::make_shared<FunctionTool>(std::move(name), std::move(description), std::move(schema), std::move(fn));
 }
 
 }  // namespace corvus

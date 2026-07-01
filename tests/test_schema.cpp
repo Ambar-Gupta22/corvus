@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include <stdexcept>
+
 #include "corvus/schema.h"
 #include "corvus/tool.h"
 

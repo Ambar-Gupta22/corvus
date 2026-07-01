@@ -94,5 +94,18 @@ Tests must stay **offline and deterministic** (MockLLM, no API keys, no network 
 ## Current status
 Phase 0 complete and verified locally: **12 test cases / 35 assertions pass** under MSVC. Backend factories (`anthropic`/`openai`/`ollama`) are **stubs that throw** until Phase 1 — use `MockLLM` for now. Not yet pushed to GitHub.
 
+## Open / parked decisions (not yet finalized)
+Consolidated so future sessions don't assume these are settled:
+
+1. **Library name** — `corvus` is a **placeholder/working name**. Final public name is TBD. It drives the namespace, `include/corvus/` dir, and CMake target, so renaming later = a sed sweep. ("Jarvis" stays reserved for the demo assistant regardless.)
+2. **Extension model** — leaning **MCP-only** for third-party extension. Undecided whether to also ship native in-process plugins (which would require a pure C ABI, never C++ types across the boundary).
+3. **Tool contract** — `execute` takes/returns `std::string` (simple, zero header deps) vs a typed result struct (`success` flag + payload). Chose string for now.
+4. **Schema builder** — hand-rolled JSON string (dependency-free) vs rewrite on nlohmann/json once Phase 1 pulls it in. Leaning: switch to the lib for correctness.
+5. **Memory trimming** — history currently grows unbounded; needs a strategy before real context limits bite. "Keep last N" vs summarize old turns. Undecided.
+6. **Async execution** — using `std::async` (simple); a managed thread pool is deferred until proven necessary.
+7. **Branding/attribution** — LICENSE copyright is "corvus contributors" (placeholder); README has a `<you>` GitHub-URL placeholder. Fill in on first push.
+
+See the 👉 notes in [docs/phase-0-explained.md](docs/phase-0-explained.md) for the reasoning behind 3–6.
+
 ## Extension model (important)
 Primary extension path is **MCP** (process-isolated, no ABI risk) and **user-defined C++ tools** via `makeTool`/`Tool`. Native in-process `.so`/DLL plugins, if ever added, MUST use a **pure C ABI** (never pass `std::string`/`std::shared_ptr` across the boundary) — currently leaning MCP-only.

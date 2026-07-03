@@ -34,7 +34,7 @@ The original `extern "C" Tool* create_tool()` plugin seam returns a C++ vtable o
 
 1. **LLM backend** — `LLMClient` interface. Impls: `AnthropicClient`, `OpenAIClient`, `OllamaClient`, `LlamaCppClient` (behind CMake flag). Each supports chat completion, **native tool-calling** (send tool JSON schemas, receive structured tool calls), **streaming** (token callback), and for local backends **GBNF** grammar constraint. Factories: `anthropic()`, `openai()`, `ollama()`, `llamaCpp()`.
 2. **Tool** — `name()`, `description()`, `inputSchema()` (JSON schema), `execute(args) -> Result`. Rule: never throw; return an error result. `ToolRegistry`: thread-safe register/lookup + schema export. **One registry, three uniform sources** — all are `Tool` instances, treated identically by the agent:
-   - **Built-in tools** ship with the library: WebSearch, Calculator, HttpRequest, sandboxed File I/O, guarded Shell.
+   - **Built-in tools** ship with the library, phased by dependency + blast radius: **Calculator** and **guarded HttpRequest** in Phase 1; **jailed File I/O** in Phase 2–3; **guarded Shell** in Phase 4 (lands with the policy layer). **WebSearch is *not* an owned tool** — deferred to the MCP ecosystem (Phase 3) rather than shipping a provider integration + key management we'd have to babysit. Every dangerous tool carries a **`ToolGuard`** — a *per-tool* safety primitive (path jail / private-IP + scheme allowlist / timeout / output cap) that lives inside `execute()`. This is deliberately distinct from the **Phase-4 per-agent `ToolPolicy`/RBAC** layer: `ToolGuard` answers "is this call itself safe?", `ToolPolicy` answers "is *this agent* allowed this tool?". Decoupling them lets guarded HttpRequest (P1) and jailed File I/O (P2–3) ship long before multi-agent RBAC exists.
    - **User-defined C++ tools** — the primary in-process extension path. Two authoring styles: (a) subclass `Tool` for stateful/complex tools; (b) **`makeTool(name, desc, schema, lambda)`** `FunctionTool` adapter for the common case — zero subclassing, a `std::function<std::string(const json&)>` body. A small **schema helper** (`schema().str(...).num(...)`) generates `inputSchema()` so users never hand-write JSON schema.
    - **MCP tools** — adapted into `Tool` via `McpClient`.
    - Registration is **explicit** by default (`.withTool(...)` / `registry.registerTool(...)`) — predictable, no hidden control flow. An optional `JARVIS_REGISTER_TOOL(MyTool)` static self-registration macro is offered for power users, documented as advanced (global init-order caveat across the `dlopen` boundary).
@@ -42,6 +42,10 @@ The original `extern "C" Tool* create_tool()` plugin seam returns a C++ vtable o
 4. **Memory** — `Memory`: append, get-context (token-budget windowing + pluggable summarization), persist. Impls: `InMemoryMemory`, `SqliteMemory`.
 5. **Reasoning strategy** — Strategy pattern: `ToolCalling` (native function-calling loop — default), `ReAct` (text fallback), `PlanAndExecute`. Template-method loop with hooks.
 6. **Agent runtime** — `Agent` owns client/registry/memory/strategy/limits. API: `run(task)` (blocking convenience), `runAsync(task) -> std::future<Result>` with `CancelToken` + timeout + `maxIterations`, and a callback form (`onToken`, `onToolCall`, `onToolResult`, `onStep`) that doubles as the lightweight tracing hook. Fluent `AgentBuilder`. Retries with backoff; infinite-loop guard.
+   - **Per-tool timeout (flagship-critical):** the loop must wrap each `execute()` in a timeout so one hung tool (slow HTTP, wedged Shell) can't freeze the whole agent thread. A blocking runtime that can stall is disqualifying for the ROS2/game/HFT targets that are the core pitch — this is the gap most on-brand to close.
+   - **Cancellation granularity:** `CancelToken` is currently only checked at loop-top, so an in-flight HTTP call can't be aborted mid-request. Thread the token *into* the LLM/HTTP client (abort the socket) so cancel is sub-second, not "after this tool finishes."
+   - **Parallel tool calls:** models emit multiple tool calls per turn; the loop runs them sequentially today. Independent calls should execute concurrently (thread pool) — folds into Phase-4 orchestration.
+   - **Usage accounting:** `RunResult` surfaces `promptTokens`/`completionTokens`/`cost` from cloud backends (near-free once responses are parsed; feeds the Phase-6 benchmark numbers).
 7. **Orchestration (multi-agent)** — `Orchestrator` routes tasks (Chain of Responsibility), `EventBus` (Observer) for agent-to-agent reactions, parallel execution via thread pool. *Later phase.*
 
 **Cross-cutting:** config (keys via env), structured logging behind the step callback, semantic versioning, stable public API in `include/jarvis/jarvis.h`.
@@ -53,10 +57,10 @@ The original `extern "C" Tool* create_tool()` plugin seam returns a C++ vtable o
 ## Roadmap (framework-first). Each phase = its own spec → plan → build cycle.
 
 - **Phase 0 — Foundations (Wk 1):** repo skeleton, CMake, CI, license, format/tidy, test harness + MockLLM, public header.
-- **Phase 1 — Core single-agent + cloud (Wk 2–4):** `LLMClient` + Anthropic (+OpenAI); `ToolCalling` strategy + ReAct fallback; Tool/Registry + built-in tools + **`makeTool` lambda adapter + schema helper** (user-defined tool path); Memory (InMemory + Sqlite); `Agent`/`AgentBuilder`; `run` + `runAsync` + cancel + streaming; retries + loop guard; tests. **Milestone: 12-line quickstart works against a real API.**
-- **Phase 2 — Local-first (Wk 5–6):** Ollama + llama.cpp backends; **GBNF** tool-call JSON; benchmark vs Python cold start; **RPi-5 fully-offline demo**.
-- **Phase 3 — MCP-native (Wk 7–8):** `McpClient` (stdio + HTTP/SSE) + tool adaptation. Demo: agent using an off-the-shelf MCP server with **zero custom tool code**.
-- **Phase 4 — Multi-agent orchestration (Wk 9–10):** Orchestrator + EventBus + routing + parallel exec; `PlanAndExecute`; **tool access control** — a `ToolPolicy` / filtered-registry-view layer above the (still dumb) `ToolRegistry`, optionally tool **scopes** with execution-time denial + audit (e.g. coding agent gets GitHub, others don't, from a shared tool pool).
+- **Phase 1 — Core single-agent + cloud (Wk 2–4):** `LLMClient` + Anthropic (+OpenAI); `ToolCalling` strategy + ReAct fallback; Tool/Registry + **`makeTool` lambda adapter + schema helper** (user-defined tool path); **first built-in tools: Calculator + guarded HttpRequest** (behind a mockable HTTP transport so tests stay offline); `ToolGuard` primitive; **per-tool timeout** in the loop; Memory (InMemory + Sqlite); `Agent`/`AgentBuilder`; `run` + `runAsync` + cancel (threaded into the client) + streaming; retries + loop guard; **usage/cost in `RunResult`**; structured tool-error convention (retryable vs fatal); tests. **Milestone: 12-line quickstart works against a real API.**
+- **Phase 2 — Local-first (Wk 5–6):** Ollama + llama.cpp backends; **GBNF** tool-call JSON; **jailed File I/O tools** (`read_file`/`write_file`/`list_dir`, path-allowlisted, no `..` escape — needs only `ToolGuard`, not RBAC); benchmark vs Python cold start; **RPi-5 fully-offline demo**.
+- **Phase 3 — MCP-native (Wk 7–8):** `McpClient` (stdio + HTTP/SSE) + tool adaptation. Demo: agent using an off-the-shelf MCP server with **zero custom tool code**. **WebSearch arrives here via a public MCP server** (not an owned integration).
+- **Phase 4 — Multi-agent orchestration (Wk 9–10):** Orchestrator + EventBus + routing + **parallel tool/agent exec** (thread pool); `PlanAndExecute`; **guarded Shell** built-in (ships with the policy layer); **tool access control** — a `ToolPolicy` / filtered-registry-view layer above the (still dumb) `ToolRegistry`, optionally tool **scopes** with execution-time denial + audit (e.g. coding agent gets GitHub, others don't, from a shared tool pool).
 - **Phase 5 — Flagship demos + extension (Wk 11–12):** ROS2 planner node; game-NPC; optional native **C-ABI** plugin example; `CONTRIBUTING.md`; 5 good-first-issues.
 - **Phase 6 — Launch (Wk 13–15):** README (benchmarks, GIFs, comparison); CI badge; MIT; v1.0.0 criteria; Show HN → r/cpp → ROS Discourse → Unreal → r/raspberry_pi → llama.cpp discussions; dev.to blog.
 - **Later / optional (post-1.0):** personal **Jarvis assistant** showcase — CLI → whisper.cpp voice → REST/phone → cloud.
@@ -67,8 +71,8 @@ The original `extern "C" Tool* create_tool()` plugin seam returns a C++ vtable o
 
 ## Verification (per phase)
 - **Unit/CI:** MockLLM-driven tests for agent loop, tool dispatch, memory windowing, retries/loop-guard; sanitizers clean; CI green on 3 OSes.
-- **Phase 1:** 12-line quickstart against a real Anthropic key completes a multi-tool task.
-- **Phase 2:** local model emits GBNF-valid tool JSON; capture RPi-5 offline run + cold-start/memory benchmarks.
+- **Phase 1:** 12-line quickstart against a real Anthropic key completes a multi-tool task; a deliberately-hung tool trips the per-tool timeout without hanging the agent; guarded HttpRequest rejects a private-IP/metadata URL; `RunResult` reports token usage — all provable offline via MockLLM + a mock HTTP transport.
+- **Phase 2:** local model emits GBNF-valid tool JSON; jailed File I/O refuses a `..`-escape path; capture RPi-5 offline run + cold-start/memory benchmarks.
 - **Phase 3:** connect to a public MCP server, list tools, complete a task with no jarvis-specific tool code.
 - **Phase 4:** orchestrator runs ≥2 agents in parallel; EventBus delivers cross-agent events; reproducible under MockLLM.
 - **Phase 5/6:** each example builds on a fresh machine in <5 min; README benchmarks reproduce; CI badge green.
@@ -76,4 +80,5 @@ The original `extern "C" Tool* create_tool()` plugin seam returns a C++ vtable o
 ## Open items
 - Final library name (parked).
 - Native in-process plugins vs **MCP-only** extension (leaning MCP-only).
-- Tool access control (RBAC): per-agent registries for now; `ToolPolicy`/scoped-access layer in Phase 4.
+- Tool access control (RBAC): per-agent registries for now; `ToolPolicy`/scoped-access layer in Phase 4. **Distinct from `ToolGuard`** (per-tool safety, per above) — don't conflate the two.
+- Structured tool errors: flat `"ERROR: ..."` string loses retryable-vs-fatal. Decide Phase 1 — typed result vs an `ERROR:RETRY` / `ERROR:FATAL` string convention — so retries/backoff can branch on it. (Ties to the `Result`-type open decision.)

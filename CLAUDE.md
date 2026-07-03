@@ -83,10 +83,10 @@ Tests must stay **offline and deterministic** (MockLLM, no API keys, no network 
 
 ## Roadmap (framework-first; each phase = spec → plan → build)
 - **Phase 0 — foundations** ✅ *(done: core loop, tools, memory, MockLLM, CI, docs)*
-- **Phase 1 — cloud backends:** real Anthropic + OpenAI clients (HTTP + native tool-calling + streaming), `SqliteMemory`, retries/backoff. Adds cpp-httplib + nlohmann/json.
-- **Phase 2 — local-first:** Ollama + llama.cpp + GBNF; Raspberry Pi offline demo + benchmarks.
-- **Phase 3 — MCP-native:** `McpClient` (stdio + HTTP/SSE), adapt MCP tools into the registry.
-- **Phase 4 — multi-agent orchestration:** Orchestrator + EventBus + routing + parallel exec; `PlanAndExecute`.
+- **Phase 1 — cloud backends:** real Anthropic + OpenAI clients (HTTP + native tool-calling + streaming), `SqliteMemory`, retries/backoff. Adds cpp-httplib + nlohmann/json. **First built-in tools: Calculator + guarded HttpRequest** (behind a mockable HTTP transport so tests stay offline). **Per-tool timeout** in the loop, **usage/cost in `RunResult`**, cancel threaded into the client, and a `ToolGuard` per-tool safety primitive.
+- **Phase 2 — local-first:** Ollama + llama.cpp + GBNF; **jailed File I/O tools** (`read_file`/`write_file`/`list_dir`, path-allowlisted — needs only `ToolGuard`, not RBAC); Raspberry Pi offline demo + benchmarks.
+- **Phase 3 — MCP-native:** `McpClient` (stdio + HTTP/SSE), adapt MCP tools into the registry. **WebSearch arrives here via a public MCP server** — not an owned integration (avoids provider coupling + key management, stays true to local-first).
+- **Phase 4 — multi-agent orchestration:** Orchestrator + EventBus + routing + parallel tool/agent exec; `PlanAndExecute`; **guarded Shell** built-in (ships with the policy layer); `ToolPolicy`/RBAC (decision 8).
 - **Phase 5 — flagship demos:** ROS2 planner node, game NPC; CONTRIBUTING + good-first-issues.
 - **Phase 6 — launch:** README/benchmarks/GIFs; Show HN → r/cpp → ROS → Unreal → r/raspberry_pi → llama.cpp.
 - **Post-1.0 (optional):** the "Jarvis" demo assistant (CLI → voice → phone → cloud). Off the critical path.
@@ -99,12 +99,13 @@ Consolidated so future sessions don't assume these are settled:
 
 1. **Library name** — `corvus` is a **placeholder/working name**. Final public name is TBD. It drives the namespace, `include/corvus/` dir, and CMake target, so renaming later = a sed sweep. ("Jarvis" stays reserved for the demo assistant regardless.)
 2. **Extension model** — leaning **MCP-only** for third-party extension. Undecided whether to also ship native in-process plugins (which would require a pure C ABI, never C++ types across the boundary).
-3. **Tool contract** — `execute` takes/returns `std::string` (simple, zero header deps) vs a typed result struct (`success` flag + payload). Chose string for now.
+3. **Tool contract** — `execute` takes/returns `std::string` (simple, zero header deps) vs a typed result struct (`success` flag + payload). Chose string for now. **Phase 1 sub-decision:** the flat `"ERROR: ..."` string can't tell retryable from fatal — pick a typed result *or* an `ERROR:RETRY` / `ERROR:FATAL` convention so retries/backoff can branch on it.
 4. **Schema builder** — hand-rolled JSON string (dependency-free) vs rewrite on nlohmann/json once Phase 1 pulls it in. Leaning: switch to the lib for correctness.
 5. **Memory trimming** — history currently grows unbounded; needs a strategy before real context limits bite. "Keep last N" vs summarize old turns. Undecided.
 6. **Async execution** — using `std::async` (simple); a managed thread pool is deferred until proven necessary.
 7. **Branding/attribution** — LICENSE copyright is "corvus contributors" (placeholder); README has a `<you>` GitHub-URL placeholder. Fill in on first push.
-8. **Tool access control (RBAC)** — no access control in Phase 0; `ToolRegistry` is a dumb thread-safe map. Per-agent isolation works today by composition (each agent's builder gets only its allowed tools — an agent can't call a tool that isn't in its registry). A real policy layer (`ToolPolicy` / filtered-registry view, optionally tool **scopes** with execution-time denial + audit) is **Phase 4** (multi-agent orchestration). Keep the registry dumb; put policy in a thin layer above it.
+8. **Tool access control (RBAC)** — no access control in Phase 0; `ToolRegistry` is a dumb thread-safe map. Per-agent isolation works today by composition (each agent's builder gets only its allowed tools — an agent can't call a tool that isn't in its registry). A real policy layer (`ToolPolicy` / filtered-registry view, optionally tool **scopes** with execution-time denial + audit) is **Phase 4** (multi-agent orchestration). Keep the registry dumb; put policy in a thin layer above it. **`ToolPolicy` (per-agent "may this agent use this tool?") is distinct from `ToolGuard` (per-tool "is this call itself safe?", decision 9) — don't conflate them; the guard ships much earlier.**
+9. **Built-in tools — phasing + safety.** Ship by dependency + blast radius, not all at once: **Calculator + guarded HttpRequest** (Phase 1), **jailed File I/O** (Phase 2), **guarded Shell** (Phase 4, with RBAC). **WebSearch is *not* owned** — comes free via MCP (Phase 3); shipping a provider integration + key management contradicts local-first and is a maintenance tax. Every dangerous tool carries a **`ToolGuard`** — a *per-tool* safety primitive (path jail / private-IP + scheme allowlist / timeout / output cap) inside `execute()`, independent of Phase-4 RBAC. **Note: HttpRequest is *not* a "safe" tool** — raw outbound HTTP from an LLM is an SSRF risk (cloud-metadata `169.254.169.254`, internal services); it ships only with its guard. Separately, the **agent loop needs a per-tool timeout** (Phase 1): today one hung `execute()` freezes the whole agent thread, which is disqualifying for the ROS2/game/HFT targets — the single highest-value gap to close.
 
 See the 👉 notes in [docs/phase-0-explained.md](docs/phase-0-explained.md) for the reasoning behind 3–6.
 

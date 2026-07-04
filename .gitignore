@@ -30,3 +30,7 @@ Thumbs.db
 # Secrets
 .env
 *.key
+
+# graphify machine-local paths
+graphify-out/.graphify_python
+graphify-out/.graphify_root

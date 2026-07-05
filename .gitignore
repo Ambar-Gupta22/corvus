@@ -31,6 +31,9 @@ Thumbs.db
 .env
 *.key
 
-# graphify machine-local paths
-graphify-out/.graphify_python
-graphify-out/.graphify_root
+# graphify generated output (regenerate with /graphify .)
+graphify-out/
+
+# Local AI-assistant tooling (vendored skills, not project source)
+.claude/skills/
+.agents/

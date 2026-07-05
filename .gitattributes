@@ -1,0 +1,4 @@
+# GitHub Linguist: keep the language bar representative of the library.
+# The long-form design docs are authored HTML, not project code — mark them
+# as documentation so they don't dominate the byte-based language stats.
+*.html linguist-documentation

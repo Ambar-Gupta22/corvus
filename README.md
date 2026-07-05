@@ -1,5 +1,11 @@
 # corvus
 
+[![CI](https://github.com/Ambar-Gupta22/corvus/actions/workflows/ci.yml/badge.svg)](https://github.com/Ambar-Gupta22/corvus/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+![C++17](https://img.shields.io/badge/C%2B%2B-17-blue.svg)
+![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)
+![Status](https://img.shields.io/badge/status-Phase%200%20·%20early-orange.svg)
+
 **An in-process, offline-capable AI agent runtime for C++.**
 It runs where Python can't — ROS2 nodes, game threads, drones, trading loops — and speaks [MCP](https://modelcontextprotocol.io) so it works with the existing tool ecosystem.
 

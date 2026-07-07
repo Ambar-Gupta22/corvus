@@ -2,6 +2,14 @@
 
 This document walks through **everything** built in Phase 0 of `corvus`, in simple language, with the **reason** behind each choice and the **alternatives** that were rejected. Read it top to bottom — each part builds on the last. Wherever you might want to weigh in, there's a **👉 Your input** note.
 
+> ⚠️ **Update (2026-07-06):** after this was written, Phase 0 was hardened — see [specs/2026-07-06-phase0-hardening-design.md](specs/2026-07-06-phase0-hardening-design.md). The biggest contract changes, in the same plain language:
+> - Tools now return a typed **`ToolResult`** (ok / retryable error / fatal error) instead of a bare string, and `execute` receives a **`ToolContext`** (cancel signal + deadline). The 👉 question about "string vs typed result" below is **resolved: typed**. The simple string-lambda `makeTool` form still exists.
+> - `Message` now also records **which tool calls the assistant made and their ids**, so the transcript can be replayed to real providers in Phase 1.
+> - `Agent` is a safe shared handle: destroying it mid-`runAsync` is fine, and starting two overlapping runs on one agent throws instead of garbling the conversation.
+> - Registering two tools with the same name now **throws** unless you explicitly pass `OverwritePolicy::Replace` (stops a rogue tool silently replacing a trusted one).
+>
+> The narrative below still explains the *reasoning* correctly; where code snippets differ, the headers in `include/corvus/` are the truth.
+
 > **What Phase 0 is:** the skeleton. A working agent *loop* with a tool system, memory, and an offline test harness — but with a *fake* LLM (MockLLM) instead of a real one. Real model backends (Anthropic, OpenAI, local) come in Phase 1.
 >
 > **Why build the skeleton first:** if the loop, the tool plumbing, and the memory are correct and tested, then plugging in a real model later is a small, safe step. If we wired a real model first, every bug would be tangled up with network calls, API keys, and costs — hard to tell whether the *loop* is wrong or the *model call* is wrong. Separate the two.

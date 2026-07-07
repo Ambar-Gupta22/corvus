@@ -33,17 +33,18 @@ All units are small, single-purpose, behind stable interfaces:
 
 | Unit | Header | Role |
 |------|--------|------|
-| `Tool` / `FunctionTool` / `makeTool` | `include/corvus/tool.h` | The agent's "hands". 3 sources — built-in, user C++, MCP — all uniform. Never throw; return `"ERROR: ..."`. |
+| `Message`/`ToolCall`/`CancelToken`/`ToolContext`/`ToolResult` | `include/corvus/types.h` | Shared value types. `Message` round-trips provider wire formats (assistant turns keep `toolCalls`, tool turns keep `toolCallId`). |
+| `Tool` / `FunctionTool` / `makeTool` | `include/corvus/tool.h` | The agent's "hands". 3 sources — built-in, user C++, MCP — all uniform. `execute(args, ctx)` never throws; returns typed `ToolResult` (Ok/Retryable/Fatal/Timeout/Cancelled). `makeTool` has a simple string-lambda form and a context-aware form. |
 | `Schema` / `schema()` | `include/corvus/schema.h` | Fluent builder → JSON Schema string, so tool authors don't hand-write JSON. |
-| `ToolRegistry` | `include/corvus/tool_registry.h` | Thread-safe by-name toolbox. |
+| `ToolRegistry` | `include/corvus/tool_registry.h` | Thread-safe by-name toolbox. Duplicate names throw unless `OverwritePolicy::Replace` (anti-shadowing). |
 | `Memory` / `InMemoryMemory` | `include/corvus/memory.h` | Conversation history sent back each turn (LLM is stateless). `SqliteMemory` = Phase 1. |
-| `LLMClient` + `ToolCall`/`ToolSpec`/`LLMResponse` | `include/corvus/llm_client.h` | Backend abstraction. Native tool-calling shape (text OR tool calls) + streaming `onToken`. |
-| `Strategy` | `include/corvus/strategy.h` | `ToolCalling` (default), `ReAct` (fallback), `PlanAndExecute` (Phase 4). |
-| `Agent` (+ `CancelToken`, `AgentCallbacks`, `RunResult`) | `include/corvus/agent.h` | **The loop.** `run()` (blocking) + `runAsync()` (future + cancel). Loop guard via `maxIterations`. |
+| `LLMClient` + `ToolSpec`/`LLMResponse` | `include/corvus/llm_client.h` | Backend abstraction. Native tool-calling shape (text OR tool calls) + streaming `onToken`. |
+| `Strategy` | `include/corvus/strategy.h` | `ToolCalling` (default), `ReAct` (fallback), `PlanAndExecute` (Phase 4). Builder throws on not-yet-implemented ones. |
+| `Agent` (+ `AgentCallbacks`, `RunResult`) | `include/corvus/agent.h` | **The loop.** `run()` (blocking) + `runAsync()` (future + cancel). Shared-state handle: the future owns the state (destroy/move-safe mid-run); one run at a time (overlap throws `logic_error`). Loop guard via `maxIterations`. |
 | `AgentBuilder` | `include/corvus/agent_builder.h` | Fluent construction with fail-fast validation. Public face of the API. |
-| `MockLLM` | `include/corvus/mock_llm.h` | Deterministic fake backend → offline, key-free, reproducible tests. |
+| `MockLLM` | `include/corvus/mock_llm.h` | Deterministic fake backend → offline, key-free, reproducible tests. `reply` / `callTool` / `replyAndCallTool`. |
 
-The agent loop (`src/agent.cpp`): build tool specs → append task to memory → loop{ check cancel → `llm.complete()` → if no tool calls, done → else run each tool, append observations } up to `maxIterations`.
+The agent loop (`src/agent.cpp`): build tool specs → append task to memory → loop{ check cancel → `llm.complete()` → if no tool calls, done → else record assistant turn with its tool calls, run each tool with a `ToolContext`, append id-paired observations } up to `maxIterations`.
 
 ### Design patterns in use
 Strategy (LLMClient/Memory/Strategy), Builder (AgentBuilder), Command (Tool), Registry (ToolRegistry), Observer (AgentCallbacks), Template Method (agent loop). Each solves a concrete problem — not decoration.
@@ -76,7 +77,7 @@ Tests must stay **offline and deterministic** (MockLLM, no API keys, no network 
 ## Conventions
 - **C++17.** Namespace `corvus`. Formatting via `.clang-format` (Google base, 4-space, 100 col); lint via `.clang-tidy`.
 - **Public headers are a contract** — keep them dependency-light and stable; don't churn them casually.
-- **Tools never throw.** Return `"ERROR: <why>"`. (`makeTool` enforces this for lambdas; `Tool` subclasses must do it manually.)
+- **Tools never throw.** Return a typed `ToolResult` (`ok`/`retryable`/`fatal`); the loop renders errors as `"ERROR: <why>"` for the model. (`makeTool` enforces never-throw for lambdas; `Tool` subclasses must do it manually.) Blocking tools must honor `ToolContext` cancel/deadline cooperatively.
 - **API-first:** design the usage site (the 12-line quickstart) before internals.
 - **YAGNI:** don't build later-phase features early. Keep Phase 0 dependency-free until Phase 1 genuinely needs JSON/HTTP libs.
 - Commit messages: Conventional Commits; end with the `Co-Authored-By` trailer.
@@ -92,14 +93,14 @@ Tests must stay **offline and deterministic** (MockLLM, no API keys, no network 
 - **Post-1.0 (optional):** the "Jarvis" demo assistant (CLI → voice → phone → cloud). Off the critical path.
 
 ## Current status
-Phase 0 complete and verified locally: **12 test cases / 35 assertions pass** under MSVC. Backend factories (`anthropic`/`openai`/`ollama`) are **stubs that throw** until Phase 1 — use `MockLLM` for now. Not yet pushed to GitHub.
+Phase 0 complete, then hardened per [docs/specs/2026-07-06-phase0-hardening-design.md](docs/specs/2026-07-06-phase0-hardening-design.md) (message round-trip, tool contract v2, agent handle semantics, registry anti-shadowing, CMake install/export, TSan CI). Verified locally: **23 test cases / 76 assertions pass** under MSVC. Backend factories (`anthropic`/`openai`/`ollama`) are **stubs that throw** until Phase 1 — use `MockLLM` for now. Not yet pushed to GitHub.
 
 ## Open / parked decisions (not yet finalized)
 Consolidated so future sessions don't assume these are settled:
 
 1. **Library name** — `corvus` is a **placeholder/working name**. Final public name is TBD. It drives the namespace, `include/corvus/` dir, and CMake target, so renaming later = a sed sweep. ("Jarvis" stays reserved for the demo assistant regardless.)
 2. **Extension model** — leaning **MCP-only** for third-party extension. Undecided whether to also ship native in-process plugins (which would require a pure C ABI, never C++ types across the boundary).
-3. **Tool contract** — `execute` takes/returns `std::string` (simple, zero header deps) vs a typed result struct (`success` flag + payload). Chose string for now. **Phase 1 sub-decision:** the flat `"ERROR: ..."` string can't tell retryable from fatal — pick a typed result *or* an `ERROR:RETRY` / `ERROR:FATAL` convention so retries/backoff can branch on it.
+3. **Tool contract** — ~~string in/out vs typed result~~ **RESOLVED (2026-07-06 hardening):** `execute(const std::string& args, const ToolContext& ctx) -> ToolResult` — typed status (retryable vs fatal) for the loop, `"ERROR: ..."` text for the model, context for cancel/deadline.
 4. **Schema builder** — hand-rolled JSON string (dependency-free) vs rewrite on nlohmann/json once Phase 1 pulls it in. Leaning: switch to the lib for correctness.
 5. **Memory trimming** — history currently grows unbounded; needs a strategy before real context limits bite. "Keep last N" vs summarize old turns. Undecided.
 6. **Async execution** — using `std::async` (simple); a managed thread pool is deferred until proven necessary.

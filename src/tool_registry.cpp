@@ -4,12 +4,18 @@
 
 namespace corvus {
 
-void ToolRegistry::registerTool(ToolPtr tool) {
+void ToolRegistry::registerTool(ToolPtr tool, OverwritePolicy policy) {
     if (!tool) {
         throw std::invalid_argument("corvus: registerTool() received a null tool");
     }
     std::lock_guard<std::mutex> lock(mutex_);
-    tools_[tool->name()] = std::move(tool);
+    const std::string name = tool->name();
+    if (policy == OverwritePolicy::Error && tools_.count(name) != 0) {
+        throw std::invalid_argument("corvus: tool '" + name +
+                                    "' is already registered — pass OverwritePolicy::Replace to "
+                                    "replace it deliberately");
+    }
+    tools_[name] = std::move(tool);
 }
 
 ToolPtr ToolRegistry::get(const std::string& name) const {

@@ -9,12 +9,17 @@
 
 namespace corvus {
 
+// What registerTool() does when a tool with the same name already exists.
+// Default is Error: silently replacing a tool by name is how a malicious or
+// misconfigured tool shadows a trusted one, so replacement must be explicit.
+enum class OverwritePolicy { Error, Replace };
+
 // ToolRegistry — thread-safe home for every tool, regardless of source
 // (built-in, user-defined C++, or MCP-adapted). The agent queries it to build
 // the tool specs it hands to the model.
 class ToolRegistry {
 public:
-    void registerTool(ToolPtr tool);
+    void registerTool(ToolPtr tool, OverwritePolicy policy = OverwritePolicy::Error);
 
     ToolPtr get(const std::string& name) const;
     bool has(const std::string& name) const;

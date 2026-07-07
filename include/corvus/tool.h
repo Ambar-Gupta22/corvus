@@ -3,6 +3,9 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <utility>
+
+#include "corvus/types.h"
 
 namespace corvus {
 
@@ -10,8 +13,13 @@ namespace corvus {
 // tools, and MCP-adapted tools all implement this and live side by side in
 // one ToolRegistry, treated identically by the agent.
 //
-// Hard rule: execute() must NEVER throw. On failure, return a string that
-// begins with "ERROR: " — the agent reads it and decides whether to retry.
+// Hard rules:
+//  - execute() must NEVER throw. On failure return ToolResult::retryable()
+//    or ToolResult::fatal() — the loop branches on the status.
+//  - Tools that can block (network, subprocess, disk) must honor
+//    ctx.cancel / ctx.deadline cooperatively. C++ cannot force-stop a
+//    thread; a tool that ignores its context can only be abandoned on
+//    timeout, never reclaimed.
 class Tool {
 public:
     virtual ~Tool() = default;
@@ -26,19 +34,22 @@ public:
     // JSON Schema (as JSON text) for the args object. Default: no args.
     virtual std::string inputSchema() const { return "{}"; }
 
-    // Execute with args as a JSON object string. Returns the observation text.
-    // NEVER throws. On failure return "ERROR: <explanation>".
-    virtual std::string execute(const std::string& args) = 0;
+    // Execute with args as a JSON object string. NEVER throws.
+    virtual ToolResult execute(const std::string& args, const ToolContext& ctx) = 0;
 };
 
 using ToolPtr = std::shared_ptr<Tool>;
 
 // FunctionTool — low-boilerplate adapter so a simple tool needs no subclass.
-// The body receives the raw JSON args string (parse it with the JSON lib of
-// your choice) and returns the observation text.
+// Two authoring forms (see makeTool below):
+//  - simple:  std::string(const std::string& args) — return value becomes an
+//    Ok result; a thrown exception becomes a fatal error.
+//  - full:    ToolResult(const std::string& args, const ToolContext& ctx) —
+//    for tools that report retryable errors or honor cancel/deadline.
 class FunctionTool : public Tool {
 public:
-    using Fn = std::function<std::string(const std::string& args)>;
+    using SimpleFn = std::function<std::string(const std::string& args)>;
+    using Fn = std::function<ToolResult(const std::string& args, const ToolContext& ctx)>;
 
     FunctionTool(std::string name, std::string description, std::string schema, Fn fn)
         : name_(std::move(name)),
@@ -50,14 +61,14 @@ public:
     std::string description() const override { return description_; }
     std::string inputSchema() const override { return schema_; }
 
-    std::string execute(const std::string& args) override {
+    ToolResult execute(const std::string& args, const ToolContext& ctx) override {
         // Enforce the never-throw contract on behalf of the lambda author.
         try {
-            return fn_(args);
+            return fn_(args, ctx);
         } catch (const std::exception& e) {
-            return std::string("ERROR: ") + e.what();
+            return ToolResult::fatal(e.what());
         } catch (...) {
-            return "ERROR: unknown exception in tool";
+            return ToolResult::fatal("unknown exception in tool");
         }
     }
 
@@ -69,8 +80,25 @@ private:
 };
 
 // makeTool — author a tool in one expression, no class required.
-inline ToolPtr makeTool(std::string name, std::string description, std::string schema, FunctionTool::Fn fn) {
-    return std::make_shared<FunctionTool>(std::move(name), std::move(description), std::move(schema), std::move(fn));
+
+// Full form: the body receives the execution context and returns a typed
+// result, so it can report retryable errors and honor cancel/deadline.
+inline ToolPtr makeTool(std::string name, std::string description, std::string schema,
+                        FunctionTool::Fn fn) {
+    return std::make_shared<FunctionTool>(std::move(name), std::move(description),
+                                          std::move(schema), std::move(fn));
+}
+
+// Simple form: a plain string-in/string-out body for the common case. The
+// return value becomes an Ok result; a thrown exception becomes fatal.
+inline ToolPtr makeTool(std::string name, std::string description, std::string schema,
+                        FunctionTool::SimpleFn fn) {
+    FunctionTool::Fn wrapped = [fn = std::move(fn)](const std::string& args,
+                                                    const ToolContext& /*ctx*/) -> ToolResult {
+        return ToolResult::ok(fn(args));
+    };
+    return std::make_shared<FunctionTool>(std::move(name), std::move(description),
+                                          std::move(schema), std::move(wrapped));
 }
 
 }  // namespace corvus

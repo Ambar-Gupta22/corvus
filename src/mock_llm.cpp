@@ -10,7 +10,13 @@ MockLLM& MockLLM::reply(std::string text) {
 }
 
 MockLLM& MockLLM::callTool(std::string toolName, std::string argumentsJson) {
+    return replyAndCallTool("", std::move(toolName), std::move(argumentsJson));
+}
+
+MockLLM& MockLLM::replyAndCallTool(std::string text, std::string toolName,
+                                   std::string argumentsJson) {
     LLMResponse r;
+    r.text = std::move(text);
     ToolCall call;
     call.id = "mock-call-" + std::to_string(queue_.size());
     call.name = std::move(toolName);

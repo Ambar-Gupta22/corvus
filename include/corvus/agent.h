@@ -10,19 +10,9 @@
 #include "corvus/memory.h"
 #include "corvus/strategy.h"
 #include "corvus/tool_registry.h"
+#include "corvus/types.h"
 
 namespace corvus {
-
-// CancelToken — cooperative cancellation for runAsync(). Copyable; all copies
-// share one flag, so the caller can cancel a run from another thread.
-class CancelToken {
-public:
-    void cancel() { flag_->store(true); }
-    bool cancelled() const { return flag_->load(); }
-
-private:
-    std::shared_ptr<std::atomic<bool>> flag_ = std::make_shared<std::atomic<bool>>(false);
-};
 
 // Observability + streaming hooks. All optional. onStep doubles as the
 // lightweight tracing seam (one call per reason->act->observe iteration).
@@ -35,13 +25,23 @@ struct AgentCallbacks {
 };
 
 struct RunResult {
-    std::string output;       // final answer (or last text on early stop)
+    std::string output;       // final answer, or the last assistant text on early stop
     int iterations = 0;       // loop iterations consumed
     bool completed = false;   // false if it hit maxIterations or was cancelled
 };
 
 // Agent — owns one reasoning loop over a model + tools + memory. Construct via
 // AgentBuilder.
+//
+// Semantics:
+//  - An Agent is a cheap HANDLE: copying it copies a handle to the same agent
+//    and the same conversation, not an independent agent.
+//  - One run at a time. Starting a run while another is in flight throws
+//    std::logic_error (surfaced at future.get() for runAsync). For concurrent
+//    tasks, build a second Agent.
+//  - Lifetime-safe async: the future returned by runAsync() keeps the agent's
+//    state alive on its own, so the Agent object may be moved or destroyed
+//    while the run is in flight.
 class Agent {
 public:
     Agent(LLMClientPtr llm, ToolRegistryPtr registry, MemoryPtr memory, Strategy strategy,
@@ -56,14 +56,21 @@ public:
                                     AgentCallbacks callbacks = {});
 
 private:
-    RunResult runImpl(const std::string& task, const AgentCallbacks& callbacks,
-                      const CancelToken& token);
+    // Everything a run needs, owned by shared_ptr so an in-flight run keeps
+    // it alive independently of the Agent object.
+    struct State {
+        LLMClientPtr llm;
+        ToolRegistryPtr registry;
+        MemoryPtr memory;
+        Strategy strategy;
+        int maxIterations;
+        std::atomic<bool> running{false};
+    };
 
-    LLMClientPtr llm_;
-    ToolRegistryPtr registry_;
-    MemoryPtr memory_;
-    Strategy strategy_;
-    int maxIterations_;
+    static RunResult runImpl(const std::shared_ptr<State>& state, const std::string& task,
+                             const AgentCallbacks& callbacks, const CancelToken& token);
+
+    std::shared_ptr<State> state_;
 };
 
 }  // namespace corvus

@@ -5,16 +5,9 @@
 #include <string>
 #include <vector>
 
-#include "corvus/memory.h"
+#include "corvus/types.h"
 
 namespace corvus {
-
-// A tool invocation the model asked for.
-struct ToolCall {
-    std::string id;         // provider-assigned id (echoed back with the result)
-    std::string name;       // tool name
-    std::string arguments;  // JSON object string
-};
 
 // One model turn. If toolCalls is empty, `text` is the final answer.
 struct LLMResponse {

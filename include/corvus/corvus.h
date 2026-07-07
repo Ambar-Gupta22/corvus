@@ -12,6 +12,7 @@
 #include "corvus/strategy.h"
 #include "corvus/tool.h"
 #include "corvus/tool_registry.h"
+#include "corvus/types.h"
 
 #define CORVUS_VERSION_MAJOR 0
 #define CORVUS_VERSION_MINOR 0

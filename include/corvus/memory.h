@@ -2,17 +2,11 @@
 
 #include <memory>
 #include <mutex>
-#include <string>
 #include <vector>
 
-namespace corvus {
+#include "corvus/types.h"
 
-// A single conversation turn kept in agent memory.
-struct Message {
-    std::string role;     // "system" | "user" | "assistant" | "tool"
-    std::string content;  // text payload
-    std::string name;     // optional: tool name for role == "tool"
-};
+namespace corvus {
 
 // Memory — the agent's running context. Implementations decide how much to
 // keep and how to window/summarize once the token budget is exceeded.

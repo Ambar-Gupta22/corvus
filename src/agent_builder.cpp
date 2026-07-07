@@ -8,6 +8,13 @@ Agent AgentBuilder::build() {
     if (!llm_) {
         throw std::runtime_error("corvus: withModel() is required before build()");
     }
+    if (strategy_ != Strategy::ToolCalling) {
+        throw std::runtime_error(
+            "corvus: only Strategy::ToolCalling is implemented — ReAct arrives with Phase 1");
+    }
+    if (maxIterations_ < 1) {
+        throw std::runtime_error("corvus: maxIterations must be >= 1");
+    }
     if (!memory_) {
         memory_ = inMemory();  // sensible default
     }

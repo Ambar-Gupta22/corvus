@@ -1,5 +1,7 @@
 #include "corvus/schema.h"
 
+#include <cstdio>
+
 namespace corvus {
 
 namespace {
@@ -26,7 +28,16 @@ std::string escape(const std::string& s) {
                 out += "\\r";
                 break;
             default:
-                out += c;
+                // Any other control character must be \u-escaped or the
+                // output is not valid JSON.
+                if (static_cast<unsigned char>(c) < 0x20) {
+                    char buf[8];
+                    std::snprintf(buf, sizeof(buf), "\\u%04x",
+                                  static_cast<unsigned>(static_cast<unsigned char>(c)));
+                    out += buf;
+                } else {
+                    out += c;
+                }
         }
     }
     return out;

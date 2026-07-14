@@ -143,7 +143,7 @@ Each turn — the user's task, the model's replies, every tool result — gets a
 
 By making it an interface, you swap storage with **one line** (`.withMemory(...)`) and nothing else in the code changes. This is the **Strategy pattern** — same idea applied to LLM backends and reasoning too.
 
-👉 **Your input:** Right now memory keeps the *entire* history forever. Real conversations eventually overflow the model's context window. Phase 1+ needs a "trimming" strategy (drop old messages, or summarize them). Do you have a preference — simple "keep last N messages", or smarter "summarize old ones"? This is a genuinely hard problem and worth your thoughts.
+👉 **Your input:** ~~Right now memory keeps the *entire* history forever ... "keep last N messages" or "summarize old ones"?~~ **ANSWERED (2026-07-04)** — full design in [docs/specs/2026-07-04-memory-design.md](specs/2026-07-04-memory-design.md). Short version: it's not either/or, and not a fixed tier hierarchy — bounding became independent, *opt-in* policies behind this same `Memory` interface. Unbounded stays the default (honest — never silently drop data); `lastN` arrives Phase 1 as a cheap growth cap (documented as NOT a fit guarantee); real token budgeting (`maxTokens`/`autoWindow`) arrives Phase 2 once local backends provide a free exact tokenizer; summarization is a Phase 3+ opt-in decorator (the only memory allowed to call an LLM); long-term facts live in a separate `FactStore` (post-1.0), never inside the turn-by-turn context path. From Phase 1 the loop also carries an always-on backstop for the provider's context-overflow error: truncate oversized message → trim harder → retry → clean failure.
 
 ---
 
@@ -327,7 +327,7 @@ Good engineering is also about *not* building things too early ("YAGNI" — You 
 - **JSON library + HTTP library** → Phase 1, when we actually call real APIs. Keeps Phase 0 dependency-free.
 - **MCP client** → Phase 3.
 - **Multi-agent orchestration** → Phase 4. Get one agent rock-solid first.
-- **Memory trimming/summarization** → needed once we hit real context limits.
+- **Memory trimming/summarization** → designed (see [memory spec](specs/2026-07-04-memory-design.md)): `lastN` + overflow backstop Phase 1, token budgets Phase 2, summary Phase 3+, `FactStore` post-1.0.
 - **Thread pool** for async → only if simple `std::async` proves insufficient.
 
 ---

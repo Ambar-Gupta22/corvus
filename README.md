@@ -51,7 +51,7 @@ A user-defined tool is one `makeTool(...)` call — no subclassing, no hand-writ
 
 ```cmake
 include(FetchContent)
-FetchContent_Declare(corvus GIT_REPOSITORY https://github.com/<you>/corvus GIT_TAG v0.0.1)
+FetchContent_Declare(corvus GIT_REPOSITORY https://github.com/Ambar-Gupta22/corvus GIT_TAG v0.0.1)
 FetchContent_MakeAvailable(corvus)
 target_link_libraries(your_target PRIVATE corvus::corvus)
 ```

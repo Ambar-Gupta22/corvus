@@ -83,6 +83,32 @@ Tests must stay **offline and deterministic** (MockLLM, no API keys, no network 
 - **YAGNI:** don't build later-phase features early. Keep Phase 0 dependency-free until Phase 1 genuinely needs JSON/HTTP libs.
 - Commit messages: Conventional Commits; end with the `Co-Authored-By` trailer.
 
+## Git workflow (Phase 1 onward)
+Repo: <https://github.com/Ambar-Gupta22/corvus>. `main` is the public face — **always green, always buildable**.
+
+- **Branch per deliverable, not per phase.** One coherent feature = one short-lived `feat/<name>` branch = one PR. No giant `phase-1` branch (unreviewable diff, drift, merge pain). A phase is "done" when its PRs are merged, not when one big branch lands.
+- **Every PR:** builds + tests pass on the 3-OS CI matrix before merge; includes tests (repo rule: a test with every behavior change) and doc updates it makes stale.
+- **Merge style: squash** — one commit per feature on `main`, clean `git log` for visitors.
+- **Trivial fixes** (typo, doc line) may go straight to `main`. PRs are for features.
+- Naming: `feat/`, `fix/`, `docs/`, `ci/` prefixes.
+
+### Phase 1 branch plan (dependency order)
+| # | Branch | Delivers | Depends on |
+|---|--------|----------|------------|
+| 1 | `feat/http-transport` | mockable HTTP transport seam; adds cpp-httplib + nlohmann/json | — |
+| 2 | `feat/anthropic-client` | `AnthropicClient`: native tool-calling, streaming, cancel threaded in, usage in `LLMResponse` | 1 |
+| 3 | `feat/openai-client` | `OpenAIClient`, same contract | 1 |
+| 4 | `feat/retries-backoff` | client retry/backoff branching on retryable vs fatal | 2 |
+| 5 | `feat/per-tool-timeout` | loop deadline via `ToolContext` + watchdog net | — |
+| 6 | `feat/sqlite-memory` | `SqliteMemory` (persistent, same `Memory` contract) | — |
+| 7 | `feat/memory-trim-backstop` | `lastN` policy + turn-boundary rules + overflow backstop | 2 (error surface) |
+| 8 | `feat/arg-validation` | per-call schema validation (required keys, primitive types, 64 KB cap) | 1 (json lib) |
+| 9 | `feat/tool-calculator` | Calculator built-in | 8 |
+| 10 | `feat/toolguard-http` | `ToolGuard` primitive + guarded HttpRequest (SSRF guard: scheme allowlist, private-IP block, caps) | 1, 5 |
+| 11 | `feat/usage-cost` | usage/cost surfaced in `RunResult` | 2 |
+
+Rows 5/6 are independent — parallelize freely. Milestone when all merged: **12-line quickstart against a real API.**
+
 ## Roadmap (framework-first; each phase = spec → plan → build)
 - **Phase 0 — foundations** ✅ *(done: core loop, tools, memory, MockLLM, CI, docs)*
 - **Phase 1 — cloud backends:** real Anthropic + OpenAI clients (HTTP + native tool-calling + streaming), `SqliteMemory`, retries/backoff. Adds cpp-httplib + nlohmann/json. **First built-in tools: Calculator + guarded HttpRequest** (behind a mockable HTTP transport so tests stay offline). **Per-tool timeout** in the loop (cooperative deadline/cancel via `ToolContext`, watchdog as net — mechanism in the design doc), **usage/cost in `RunResult`**, cancel threaded into the client, a `ToolGuard` per-tool safety primitive, **memory: `lastN` trimming + always-on context-overflow backstop** (truncate oversized msg → trim harder → retry → clean error; trim rules: keep system msg, keep in-flight exchange, atomic tool exchanges — see memory spec), and per-call arg validation (required keys + primitive types + size cap).
@@ -94,7 +120,7 @@ Tests must stay **offline and deterministic** (MockLLM, no API keys, no network 
 - **Post-1.0 (optional):** the "Jarvis" demo assistant (CLI → voice → phone → cloud); **`FactStore`** long-term memory (separate retrieval interface + `recall_facts`/`remember_fact` tools — embeddings never enter the core lib). Off the critical path.
 
 ## Current status
-Phase 0 complete, then hardened per [docs/specs/2026-07-06-phase0-hardening-design.md](docs/specs/2026-07-06-phase0-hardening-design.md) (message round-trip, tool contract v2, agent handle semantics, registry anti-shadowing, CMake install/export, TSan CI). Verified locally: **23 test cases / 76 assertions pass** under MSVC. Backend factories (`anthropic`/`openai`/`ollama`) are **stubs that throw** until Phase 1 — use `MockLLM` for now. Not yet pushed to GitHub.
+Phase 0 complete, then hardened per [docs/specs/2026-07-06-phase0-hardening-design.md](docs/specs/2026-07-06-phase0-hardening-design.md) (message round-trip, tool contract v2, agent handle semantics, registry anti-shadowing, CMake install/export, TSan CI). Verified locally: **23 test cases / 76 assertions pass** under MSVC. Backend factories (`anthropic`/`openai`/`ollama`) are **stubs that throw** until Phase 1 — use `MockLLM` for now. **Pushed to GitHub: <https://github.com/Ambar-Gupta22/corvus>** — from Phase 1 onward, work lands via feature-branch PRs (see Git workflow below); `main` stays green.
 
 ## Open / parked decisions (not yet finalized)
 Consolidated so future sessions don't assume these are settled:
@@ -105,7 +131,7 @@ Consolidated so future sessions don't assume these are settled:
 4. **Schema builder** — hand-rolled JSON string (dependency-free) vs rewrite on nlohmann/json once Phase 1 pulls it in. Leaning: switch to the lib for correctness.
 5. ~~**Memory trimming**~~ **RESOLVED (2026-07-04, full design):** memory = composable opt-in policies behind the unchanged `Memory` seam — unbounded stays default; `lastN` (P1, growth cap, NOT a fit guarantee) → `maxTokens`/`autoWindow` (P2, real fit) → `SummarizingMemory` (P3+, opt-in, only impl allowed to call an LLM) → `FactStore` (post-1.0, separate interface, not a `Memory`). Always-on overflow backstop from P1. Full rules + edge cases: [docs/specs/2026-07-04-memory-design.md](docs/specs/2026-07-04-memory-design.md).
 6. **Async execution** — using `std::async` (simple); a managed thread pool is deferred until proven necessary.
-7. **Branding/attribution** — LICENSE copyright is "corvus contributors" (placeholder); README has a `<you>` GitHub-URL placeholder. Fill in on first push.
+7. **Branding/attribution** — repo is live at `Ambar-Gupta22/corvus`; README URLs point there. LICENSE copyright stays "corvus contributors" (fine for a community project — revisit only if a legal entity/name change demands it).
 8. **Tool access control (RBAC)** — no access control in Phase 0; `ToolRegistry` is a dumb thread-safe map. Per-agent isolation works today by composition (each agent's builder gets only its allowed tools — an agent can't call a tool that isn't in its registry). A real policy layer (`ToolPolicy` / filtered-registry view, optionally tool **scopes** with execution-time denial + audit) is **Phase 4** (multi-agent orchestration). Keep the registry dumb; put policy in a thin layer above it. **`ToolPolicy` (per-agent "may this agent use this tool?") is distinct from `ToolGuard` (per-tool "is this call itself safe?", decision 9) — don't conflate them; the guard ships much earlier.**
 9. **Built-in tools — phasing + safety.** Ship by dependency + blast radius, not all at once: **Calculator + guarded HttpRequest** (Phase 1), **jailed File I/O** (Phase 2), **guarded Shell** (Phase 4, with RBAC). **WebSearch is *not* owned** — comes free via MCP (Phase 3); shipping a provider integration + key management contradicts local-first and is a maintenance tax. Every dangerous tool carries a **`ToolGuard`** — a *per-tool* safety primitive (path jail / private-IP + scheme allowlist / timeout / output cap) inside `execute()`, independent of Phase-4 RBAC. **Note: HttpRequest is *not* a "safe" tool** — raw outbound HTTP from an LLM is an SSRF risk (cloud-metadata `169.254.169.254`, internal services); it ships only with its guard. Separately, the **agent loop needs a per-tool timeout** (Phase 1): today one hung `execute()` freezes the whole agent thread, which is disqualifying for the ROS2/game/HFT targets — the single highest-value gap to close.
 

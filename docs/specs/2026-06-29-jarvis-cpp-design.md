@@ -67,6 +67,10 @@ The original `extern "C" Tool* create_tool()` plugin seam returns a C++ vtable o
 - **Phase 6 — Launch (Wk 13–15):** README (benchmarks, GIFs, comparison); CI badge; MIT; v1.0.0 criteria; Show HN → r/cpp → ROS Discourse → Unreal → r/raspberry_pi → llama.cpp discussions; dev.to blog.
 - **Later / optional (post-1.0):** personal **Jarvis assistant** showcase — CLI → whisper.cpp voice → REST/phone → cloud; **`FactStore`** long-term memory (separate retrieval interface, `recall_facts`/`remember_fact` tools; embeddings/vector deps stay out of core permanently).
 
+### Delivery model (Phase 1 onward)
+
+Repo: <https://github.com/Ambar-Gupta22/corvus>. `main` stays always green (CI-gated); each phase decomposes into **short-lived feature branches, one PR per coherent deliverable** — never one long-lived phase branch. Squash-merge for a one-commit-per-feature history; every PR carries its tests and doc updates. The Phase 1 decomposition (dependency-ordered, ~11 PRs: transport seam → clients → retries → timeout ∥ sqlite → trim+backstop → validation → calculator → guard+HttpRequest → usage/cost) is tabulated in CLAUDE.md "Phase 1 branch plan"; later phases get the same treatment when their specs land.
+
 ### Defaults
 - **C++17 baseline** (compat with ROS2/Unreal/embedded). Async via `std::future` + thread pool; optional C++20 coroutine adapter later.
 - **Two flagship demos committed:** RPi-5 offline + ROS2 planner. Game-NPC is a strong third, not a gate.

@@ -84,6 +84,61 @@ TEST_CASE("streamed script without an onChunk collapses chunks into the body") {
     CHECK(r.body == "abcd");
 }
 
+TEST_CASE("streamed non-2xx keeps the error payload in body and never calls onChunk") {
+    MockHttpTransport mock;
+    mock.enqueueStream(429, {"{\"error\":", "\"slow down\"}"});
+
+    bool onChunkCalled = false;
+    const auto r = mock.post(
+        req(),
+        [&](const char*, std::size_t) {
+            onChunkCalled = true;
+            return true;
+        },
+        {});
+
+    CHECK(r.status == 429);
+    CHECK_FALSE(onChunkCalled);  // matches the real transport: errors go to body
+    CHECK(r.body == "{\"error\":\"slow down\"}");
+}
+
+TEST_CASE("enqueue()'d 2xx body with onChunk streams through onChunk, leaving body empty") {
+    MockHttpTransport mock;
+    HttpResponse resp;
+    resp.status = 200;
+    resp.body = "streamed-payload";
+    mock.enqueue(resp);
+
+    std::string got;
+    const auto r = mock.post(
+        req(),
+        [&](const char* d, std::size_t n) {
+            got.append(d, n);
+            return true;
+        },
+        {});
+
+    CHECK(r.status == 200);
+    CHECK(r.body.empty());     // real transport routes 2xx bytes to onChunk
+    CHECK(got == "streamed-payload");
+}
+
+TEST_CASE("mock honors a pre-fired cancel like the real transport's pre-flight check") {
+    MockHttpTransport mock;
+    HttpResponse resp;
+    resp.status = 200;
+    resp.body = "ignored";
+    mock.enqueue(resp);
+
+    CancelToken token;
+    token.cancel();
+    const auto r = mock.post(req(), nullptr, token);
+    CHECK(r.status == 0);
+    CHECK(r.error == "cancelled");
+    // The scripted response is consumed only on a live call, so it is still queued.
+    CHECK(mock.requests().size() == 1);
+}
+
 TEST_CASE("receiver returning false aborts the stream") {
     MockHttpTransport mock;
     mock.enqueueStream(200, {"one", "two", "three"});
@@ -140,6 +195,25 @@ TEST_CASE("default transport rejects malformed URLs without touching the network
     const auto r2 = transport->post(ftp, nullptr, {});
     CHECK(r2.status == 0);
     CHECK(r2.error == "invalid url: ftp://example.com/file");
+}
+
+TEST_CASE("default transport rejects userinfo in the authority without connecting") {
+    const auto transport = defaultHttpTransport();
+    HttpRequest r;
+    r.url = "https://api.anthropic.com@evil.example/v1/messages";
+    const auto resp = transport->post(r, nullptr, {});
+    CHECK(resp.status == 0);
+    CHECK(resp.error == "invalid url: " + r.url);
+}
+
+TEST_CASE("default transport rejects CR/LF in a header without connecting") {
+    const auto transport = defaultHttpTransport();
+    HttpRequest r;
+    r.url = "http://127.0.0.1:1/x";
+    r.headers = {{"x-api-key", "good\r\nHost: evil.example"}};
+    const auto resp = transport->post(r, nullptr, {});
+    CHECK(resp.status == 0);
+    CHECK(resp.error.rfind("invalid header", 0) == 0);
 }
 
 TEST_CASE("default transport fails fast when the token is already cancelled") {

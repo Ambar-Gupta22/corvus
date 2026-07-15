@@ -1,4 +1,7 @@
-cmake_minimum_required(VERSION 3.16)
+# 3.18: FetchContent_Declare(SOURCE_SUBDIR) is honored from 3.18 on — below it
+# MakeAvailable would add_subdirectory the fetched deps and pollute our
+# install/export surface.
+cmake_minimum_required(VERSION 3.18)
 project(corvus VERSION 0.0.1 LANGUAGES CXX)
 
 # --- Options ---------------------------------------------------------------

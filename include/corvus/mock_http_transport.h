@@ -50,24 +50,51 @@ public:
             r.error = "MockHttpTransport: no scripted response";
             return r;
         }
+        if (cancel.cancelled()) {
+            HttpResponse r;
+            r.error = "cancelled";  // mirror the real transport's pre-flight check
+            return r;
+        }
         Script s = std::move(scripts_.front());
         scripts_.pop_front();
 
-        // Non-streamed call: chunks (if scripted) collapse into the body,
-        // mirroring a real transport reading the full payload.
-        if (s.chunks.empty() || !onChunk) {
-            for (const auto& c : s.chunks) s.response.body += c;
-            return std::move(s.response);
+        // Normalize the scripted payload: an enqueue()'d response carries its
+        // bytes in body, an enqueueStream() carries them in chunks.
+        std::vector<std::string> payload = s.chunks;
+        if (payload.empty() && !s.response.body.empty()) payload.push_back(s.response.body);
+
+        // Non-streamed call: whole payload collapses into body (real transport
+        // reads the full response into HttpResponse::body).
+        if (!onChunk) {
+            HttpResponse r;
+            r.status = s.response.status;
+            r.headers = std::move(s.response.headers);
+            r.body.clear();
+            for (const auto& c : payload) r.body += c;
+            return r;
         }
 
-        for (std::size_t i = 0; i < s.chunks.size(); ++i) {
+        const bool ok2xx = s.response.status / 100 == 2;
+
+        // Non-2xx streamed reply: the real transport does NOT forward error
+        // bytes to onChunk; it keeps the payload in body for the caller to
+        // parse. Mirror that.
+        if (!ok2xx) {
+            HttpResponse r;
+            r.status = s.response.status;
+            r.headers = std::move(s.response.headers);
+            for (const auto& c : payload) r.body += c;
+            return r;
+        }
+
+        for (std::size_t i = 0; i < payload.size(); ++i) {
             if (onBeforeChunk) onBeforeChunk(i);
             if (cancel.cancelled()) {
                 HttpResponse r;
                 r.error = "cancelled";
                 return r;
             }
-            if (!onChunk(s.chunks[i].data(), s.chunks[i].size())) {
+            if (!onChunk(payload[i].data(), payload[i].size())) {
                 HttpResponse r;
                 r.error = "aborted by receiver";
                 return r;
@@ -77,7 +104,7 @@ public:
         HttpResponse done;
         done.status = s.response.status;
         done.headers = std::move(s.response.headers);
-        return done;  // streamed success: body stays empty (see HttpResponse)
+        return done;  // streamed 2xx success: body stays empty (see HttpResponse)
     }
 
 private:

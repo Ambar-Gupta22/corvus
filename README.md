@@ -58,7 +58,7 @@ target_link_libraries(your_target PRIVATE corvus::corvus)
 
 ## Build from source
 
-Requires **CMake ≥ 3.16** and a **C++17** compiler (GCC ≥ 9, Clang ≥ 10, or MSVC 2019+).
+Requires **CMake ≥ 3.18** and a **C++17** compiler (GCC ≥ 9, Clang ≥ 10, or MSVC 2019+).
 
 ```bash
 cmake -S . -B build -DCORVUS_BUILD_EXAMPLES=ON

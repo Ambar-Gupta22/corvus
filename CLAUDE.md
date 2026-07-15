@@ -62,7 +62,7 @@ docs/             specs + explainers
 
 ## Build & test
 
-Requires **CMake ≥ 3.16** and a **C++17** compiler (MSVC 2019+, GCC ≥ 9, or Clang ≥ 10).
+Requires **CMake ≥ 3.18** and a **C++17** compiler (MSVC 2019+, GCC ≥ 9, or Clang ≥ 10).
 This machine uses **MSVC Build Tools 2026 + CMake 4.3** (verified working).
 
 ```bash

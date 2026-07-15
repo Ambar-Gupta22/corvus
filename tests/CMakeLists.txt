@@ -20,6 +20,7 @@ add_executable(corvus_tests
   test_schema.cpp
   test_registry.cpp
   test_agent.cpp
+  test_transport_contract.cpp
 )
 target_link_libraries(corvus_tests PRIVATE corvus::corvus doctest_header)
 

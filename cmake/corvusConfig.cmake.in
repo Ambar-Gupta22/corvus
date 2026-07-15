@@ -3,6 +3,12 @@
 include(CMakeFindDependencyMacro)
 find_dependency(Threads)
 
+# Static-library consumers need OpenSSL at final link when corvus was built
+# with TLS (the dependency is PRIVATE but still link-time for static libs).
+if("@CORVUS_TLS_ENABLED@")
+  find_dependency(OpenSSL)
+endif()
+
 include("${CMAKE_CURRENT_LIST_DIR}/corvusTargets.cmake")
 
 check_required_components(corvus)

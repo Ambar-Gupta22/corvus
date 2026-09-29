@@ -8,8 +8,8 @@ Requires CMake ≥ 3.18 and a C++17 compiler (GCC ≥ 9, Clang ≥ 10, MSVC 2019
 
 ```bash
 cmake -S . -B build -DCORVUS_BUILD_EXAMPLES=ON
-cmake --build build
-ctest --test-dir build --output-on-failure
+cmake --build build --config Release
+ctest --test-dir build -C Release --output-on-failure
 ```
 
 Tests use a deterministic `MockLLM` — no API key, no network. Add a test for every behavior change.

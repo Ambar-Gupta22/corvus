@@ -18,7 +18,7 @@ MockLLM& MockLLM::replyAndCallTool(std::string text, std::string toolName,
     LLMResponse r;
     r.text = std::move(text);
     ToolCall call;
-    call.id = "mock-call-" + std::to_string(queue_.size());
+    call.id = "mock-call-" + std::to_string(nextId_++);
     call.name = std::move(toolName);
     call.arguments = std::move(argumentsJson);
     r.toolCalls.push_back(std::move(call));

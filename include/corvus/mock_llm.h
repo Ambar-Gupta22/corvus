@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <deque>
 #include <string>
 #include <vector>
@@ -34,6 +35,7 @@ public:
 
 private:
     std::deque<LLMResponse> queue_;
+    std::size_t nextId_ = 0;  // monotonic: ids stay unique across consume/enqueue
 };
 
 }  // namespace corvus

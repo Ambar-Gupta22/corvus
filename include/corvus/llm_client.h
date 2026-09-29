@@ -31,6 +31,7 @@ using TokenCallback = std::function<void(const std::string& chunk)>;
 class LLMClient {
 public:
     virtual ~LLMClient() = default;
+    // Short backend identifier for logs/traces (e.g. "mock", "anthropic").
     virtual std::string name() const = 0;
 
     // One completion turn. `tools` may be empty. `onToken`, if set, receives
@@ -43,7 +44,7 @@ public:
 using LLMClientPtr = std::shared_ptr<LLMClient>;
 
 // Backend factories. Implemented in Phase 1 — declared now so the public API
-// is stable from the start.
+// is stable from the start. Until then each throws std::runtime_error.
 LLMClientPtr anthropic(const std::string& model, const std::string& key = "");
 LLMClientPtr openai(const std::string& model, const std::string& key = "");
 LLMClientPtr ollama(const std::string& model, const std::string& host = "http://localhost:11434");

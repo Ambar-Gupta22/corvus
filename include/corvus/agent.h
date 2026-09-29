@@ -44,14 +44,20 @@ struct RunResult {
 //    while the run is in flight.
 class Agent {
 public:
+    // Prefer AgentBuilder, which validates and fills defaults; this
+    // constructor trusts its arguments (all non-null, maxIterations >= 1).
     Agent(LLMClientPtr llm, ToolRegistryPtr registry, MemoryPtr memory, Strategy strategy,
           int maxIterations);
 
-    // Blocking convenience. Streams/traces through `callbacks` if provided.
+    // Blocking convenience. Streams/traces through `callbacks` if provided;
+    // callbacks run on the calling thread. Throws std::logic_error if a run is
+    // already in flight; exceptions from the LLMClient propagate.
     RunResult run(const std::string& task, const AgentCallbacks& callbacks = {});
 
     // Non-blocking: returns immediately with a future. Pass a CancelToken to
     // stop it cooperatively (e.g. from a ROS2 spin loop or game thread).
+    // Callbacks run on the worker thread, so they must be thread-safe.
+    // Cancellation is checked at the start of each loop iteration.
     std::future<RunResult> runAsync(const std::string& task, CancelToken token = {},
                                     AgentCallbacks callbacks = {});
 

@@ -120,7 +120,7 @@ Rows 5/6 are independent — parallelize freely. Milestone when all merged: **12
 - **Post-1.0 (optional):** the "Jarvis" demo assistant (CLI → voice → phone → cloud); **`FactStore`** long-term memory (separate retrieval interface + `recall_facts`/`remember_fact` tools — embeddings never enter the core lib). Off the critical path.
 
 ## Current status
-Phase 0 complete, then hardened per [docs/specs/2026-07-06-phase0-hardening-design.md](docs/specs/2026-07-06-phase0-hardening-design.md) (message round-trip, tool contract v2, agent handle semantics, registry anti-shadowing, CMake install/export, TSan CI). Verified locally: **23 test cases / 76 assertions pass** under MSVC. Backend factories (`anthropic`/`openai`/`ollama`) are **stubs that throw** until Phase 1 — use `MockLLM` for now. **Pushed to GitHub: <https://github.com/Ambar-Gupta22/corvus>** — from Phase 1 onward, work lands via feature-branch PRs (see Git workflow below); `main` stays green.
+Phase 0 complete, then hardened per [docs/specs/2026-07-06-phase0-hardening-design.md](docs/specs/2026-07-06-phase0-hardening-design.md) (message round-trip, tool contract v2, agent handle semantics, registry anti-shadowing, CMake install/export, TSan CI). Verified locally: **41 test cases / 135 assertions pass** under MSVC (as of the builder/mock fix PR). Backend factories (`anthropic`/`openai`/`ollama`) are **stubs that throw** until Phase 1 — use `MockLLM` for now. **Pushed to GitHub: <https://github.com/Ambar-Gupta22/corvus>** — from Phase 1 onward, work lands via feature-branch PRs (see Git workflow below); `main` stays green.
 
 ## Open / parked decisions (not yet finalized)
 Consolidated so future sessions don't assume these are settled:

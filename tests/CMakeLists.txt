@@ -21,7 +21,9 @@ add_executable(corvus_tests
   test_registry.cpp
   test_agent.cpp
   test_transport_contract.cpp
+  test_version.cpp
 )
 target_link_libraries(corvus_tests PRIVATE corvus::corvus doctest_header)
+target_compile_definitions(corvus_tests PRIVATE CORVUS_PROJECT_VERSION="${PROJECT_VERSION}")
 
 add_test(NAME corvus_tests COMMAND corvus_tests)

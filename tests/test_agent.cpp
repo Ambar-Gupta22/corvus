@@ -3,6 +3,7 @@
 #include <future>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "corvus/agent_builder.h"
 #include "corvus/mock_llm.h"
@@ -156,11 +157,82 @@ TEST_CASE("build() validates its inputs") {
 
     SUBCASE("no model") { CHECK_THROWS(AgentBuilder().build()); }
     SUBCASE("unimplemented strategy") {
-        CHECK_THROWS(AgentBuilder().withModel(mock).withStrategy(Strategy::ReAct).build());
+        CHECK_THROWS_WITH(AgentBuilder().withModel(mock).withStrategy(Strategy::ReAct).build(),
+                          doctest::Contains("only Strategy::ToolCalling is implemented"));
     }
     SUBCASE("non-positive maxIterations") {
         CHECK_THROWS(AgentBuilder().withModel(mock).withMaxIterations(0).build());
     }
+}
+
+TEST_CASE("build() twice on one builder yields independent agents") {
+    auto mock = std::make_shared<MockLLM>();
+    mock->reply("first").reply("second");
+
+    AgentBuilder builder;
+    builder.withModel(mock).withTool(echoTool());
+
+    Agent a = builder.build();
+    Agent b = builder.build();  // used to throw: tool re-registered into a's registry
+
+    CHECK(a.run("task a").output == "first");
+    CHECK(b.run("task b").output == "second");
+}
+
+TEST_CASE("default memory is not shared between agents from one builder") {
+    // Observe memory through the model: MockLLM ignores input, so capture it.
+    struct Spy : LLMClient {
+        std::vector<std::size_t> seen;
+        std::string name() const override { return "spy"; }
+        LLMResponse complete(const std::vector<Message>& messages, const std::vector<ToolSpec>&,
+                             const TokenCallback&) override {
+            seen.push_back(messages.size());
+            LLMResponse r;
+            r.text = "ok";
+            return r;
+        }
+    };
+    auto spy = std::make_shared<Spy>();
+
+    AgentBuilder builder;
+    builder.withModel(spy);
+    Agent a = builder.build();
+    Agent b = builder.build();
+    a.run("one");
+    b.run("two");
+
+    // Each agent's first turn sees only its own user message.
+    REQUIRE(spy->seen.size() == 2);
+    CHECK(spy->seen[0] == 1);
+    CHECK(spy->seen[1] == 1);
+}
+
+TEST_CASE("repeated build() with a shared registry keeps anti-shadowing") {
+    auto mock = std::make_shared<MockLLM>();
+    auto registry = std::make_shared<ToolRegistry>();
+    auto tool = echoTool();
+
+    AgentBuilder builder;
+    builder.withModel(mock).withRegistry(registry).withTool(tool);
+    CHECK_NOTHROW(builder.build());
+    CHECK_NOTHROW(builder.build());  // same tool object: idempotent
+    CHECK(registry->size() == 1);
+
+    // A different tool under the same name is still rejected.
+    AgentBuilder other;
+    other.withModel(mock).withRegistry(registry).withTool(echoTool());
+    CHECK_THROWS_AS(other.build(), std::invalid_argument);
+}
+
+TEST_CASE("MockLLM tool-call ids stay unique across consume and re-enqueue") {
+    MockLLM mock;
+    mock.callTool("t", "{}");
+    std::string first = mock.complete({}, {}).toolCalls.at(0).id;
+
+    mock.callTool("t", "{}");  // queue is empty again here
+    std::string second = mock.complete({}, {}).toolCalls.at(0).id;
+
+    CHECK(first != second);
 }
 
 TEST_CASE("runAsync returns a future and honors a pre-cancelled token") {

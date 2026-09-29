@@ -26,7 +26,9 @@ public:
         return add(name, "boolean", description, required);
     }
 
-    // Build the JSON Schema object as text.
+    // Build the JSON Schema object as text:
+    //   {"type":"object","properties":{...},"required":[...]}
+    // Flat parameters only (no nested objects/arrays/enums yet).
     std::string json() const;
 
     operator std::string() const { return json(); }
@@ -48,6 +50,7 @@ private:
     std::vector<Field> fields_;
 };
 
+// Entry point for the fluent chain: corvus::schema().str(...).num(...)
 inline Schema schema() { return Schema(); }
 
 }  // namespace corvus

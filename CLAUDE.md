@@ -23,9 +23,11 @@ Guidance for AI assistants (and humans) working in this repo. Read this first.
 3. **Async + streaming + cancellation** — non-blocking `runAsync`, token streaming, `CancelToken`. Required for ROS2/game targets (a blocking loop would stall them).
 
 ## Source-of-truth docs (read before large changes)
+- **Start here — onboarding guides (describe the code as it is now):** [docs/README.md](docs/README.md) (index + reading paths) → [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (why) → [docs/CODE_TOUR.md](docs/CODE_TOUR.md) (every file/function, invariants, sharp edges) → [docs/HISTORY.md](docs/HISTORY.md) (eras + commits).
 - **Design/roadmap:** [docs/specs/2026-06-29-jarvis-cpp-design.md](docs/specs/2026-06-29-jarvis-cpp-design.md) — architecture, phases, decisions.
 - **Memory design:** [docs/specs/2026-07-04-memory-design.md](docs/specs/2026-07-04-memory-design.md) — composable trimming policies, overflow backstop, summary/FactStore phasing.
-- **Phase 0 explainer (plain language + rationale):** [docs/phase-0-explained.md](docs/phase-0-explained.md).
+- **Cloud clients (Phase 1):** [docs/specs/2026-07-15-cloud-clients-design.md](docs/specs/2026-07-15-cloud-clients-design.md) (transport/error/usage contracts, retry policy) + [docs/plans/2026-07-15-cloud-clients-plan.md](docs/plans/2026-07-15-cloud-clients-plan.md) (5 PRs).
+- **Historical explainers (dated snapshots, partly stale):** [docs/history/phase-0-explained.md](docs/history/phase-0-explained.md), [docs/history/pr1-http-transport-explained.md](docs/history/pr1-http-transport-explained.md).
 - **Original vision:** `ai-agent orchestration architecture.html` (repo root) — the long-form design the above revises (framework-first reorder).
 
 ## Architecture (core runtime)
@@ -42,28 +44,31 @@ All units are small, single-purpose, behind stable interfaces:
 | `LLMClient` + `ToolSpec`/`LLMResponse` | `include/corvus/llm_client.h` | Backend abstraction. Native tool-calling shape (text OR tool calls) + streaming `onToken`. |
 | `Strategy` | `include/corvus/strategy.h` | `ToolCalling` (default), `ReAct` (fallback), `PlanAndExecute` (Phase 4). Builder throws on not-yet-implemented ones. |
 | `Agent` (+ `AgentCallbacks`, `RunResult`) | `include/corvus/agent.h` | **The loop.** `run()` (blocking) + `runAsync()` (future + cancel). Shared-state handle: the future owns the state (destroy/move-safe mid-run); one run at a time (overlap throws `logic_error`). Loop guard via `maxIterations`. |
-| `AgentBuilder` | `include/corvus/agent_builder.h` | Fluent construction with fail-fast validation. Public face of the API. |
+| `AgentBuilder` | `include/corvus/agent_builder.h` | Fluent construction with fail-fast validation. Public face of the API. Unset memory/registry default to fresh objects per `build()` (two builds = two independent agents). |
 | `MockLLM` | `include/corvus/mock_llm.h` | Deterministic fake backend → offline, key-free, reproducible tests. `reply` / `callTool` / `replyAndCallTool`. |
+| `HttpTransport` + `HttpRequest`/`HttpResponse`/`ChunkCallback` | `include/corvus/http_transport.h` | Seam between LLM clients and the network (raw HTTP bytes). `post()` blocks, never throws (`status == 0` = transport failure), streams via `onChunk`, honors `CancelToken` per buffer. `defaultHttpTransport()` = cpp-httplib impl in `src/httplib_transport.cpp` (URL/header guards, body caps, no redirects). |
+| `MockHttpTransport` | `include/corvus/mock_http_transport.h` | Scripted transport double (FIFO responses/chunks, request recording). Must mirror the real transport exactly — pinned by `tests/test_transport_contract.cpp`. Not in the `corvus.h` umbrella (test utility). |
 
 The agent loop (`src/agent.cpp`): build tool specs → append task to memory → loop{ check cancel → `llm.complete()` → if no tool calls, done → else record assistant turn with its tool calls, run each tool with a `ToolContext`, append id-paired observations } up to `maxIterations`.
 
 ### Design patterns in use
-Strategy (LLMClient/Memory/Strategy), Builder (AgentBuilder), Command (Tool), Registry (ToolRegistry), Observer (AgentCallbacks), Template Method (agent loop). Each solves a concrete problem — not decoration.
+Strategy (LLMClient/Memory/HttpTransport/Strategy), Builder (AgentBuilder), Command (Tool), Registry (ToolRegistry), Observer (AgentCallbacks), Template Method (agent loop), Seam + Test Double (MockLLM, MockHttpTransport), RAII guard (`RunningGuard`, one run at a time), Handle/shared state (`Agent` → `State`). Each solves a concrete problem — not decoration; see [docs/ARCHITECTURE.md §4](docs/ARCHITECTURE.md#4-design-patterns-and-the-problem-each-one-solves-here).
 
 ## Directory layout
 ```
 include/corvus/   public headers  (STABLE CONTRACT — keep dependency-light)
 src/              implementations
-tests/            doctest suite (uses MockLLM; runs offline)
+tests/            doctest suite (MockLLM + MockHttpTransport; runs offline)
 examples/         mock_quickstart (offline demo)
-docs/             specs + explainers
-.github/workflows ci.yml (Linux/macOS/Windows + ASan/UBSan)
+cmake/            corvusConfig.cmake.in (find_package support)
+docs/             README (index), ARCHITECTURE, CODE_TOUR, HISTORY; specs/, plans/, history/
+.github/workflows ci.yml (Linux/macOS/Windows + ASan/UBSan + TSan)
 ```
 
 ## Build & test
 
 Requires **CMake ≥ 3.18** and a **C++17** compiler (MSVC 2019+, GCC ≥ 9, or Clang ≥ 10).
-This machine uses **MSVC Build Tools 2026 + CMake 4.3** (verified working).
+This machine uses **MSVC Build Tools 2026 + CMake 4.3** (verified working). **`cmake` is not on PATH here** (neither Git Bash nor PowerShell) — call the VS-bundled binary: `"C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe"` (also recorded in `build/CMakeCache.txt` as `CMAKE_COMMAND`). OpenSSL isn't installed locally, so local builds are TLS-less (expected CMake warning); CI covers the rest.
 
 ```bash
 cmake -S . -B build -DCORVUS_BUILD_EXAMPLES=ON
@@ -80,7 +85,9 @@ Tests must stay **offline and deterministic** (MockLLM, no API keys, no network 
 - **Public headers are a contract** — keep them dependency-light and stable; don't churn them casually.
 - **Tools never throw.** Return a typed `ToolResult` (`ok`/`retryable`/`fatal`); the loop renders errors as `"ERROR: <why>"` for the model. (`makeTool` enforces never-throw for lambdas; `Tool` subclasses must do it manually.) Blocking tools must honor `ToolContext` cancel/deadline cooperatively.
 - **API-first:** design the usage site (the 12-line quickstart) before internals.
-- **YAGNI:** don't build later-phase features early. Keep Phase 0 dependency-free until Phase 1 genuinely needs JSON/HTTP libs.
+- **YAGNI:** don't build later-phase features early.
+- **Dependencies:** cpp-httplib v0.18.3 + nlohmann/json v3.11.3 (since PR #1; json first used in PR 2), OpenSSL optional (`CORVUS_ENABLE_TLS`). All fetched sources-only and linked **PRIVATE** — never include a third-party header from `include/corvus/`. Adding a dependency needs a real need + a pinned tag.
+- **Docs stay current:** a PR that changes a public header updates its comments **and** its entry in [docs/CODE_TOUR.md](docs/CODE_TOUR.md); a merged feature PR adds an era/entry to [docs/HISTORY.md](docs/HISTORY.md). Specs/plans are the decision record — don't rewrite them after the fact (fix broken links only).
 - Commit messages: Conventional Commits; end with the `Co-Authored-By` trailer.
 
 ## Git workflow (Phase 1 onward)
@@ -95,7 +102,7 @@ Repo: <https://github.com/Ambar-Gupta22/corvus>. `main` is the public face — *
 ### Phase 1 branch plan (dependency order)
 | # | Branch | Delivers | Depends on |
 |---|--------|----------|------------|
-| 1 | `feat/http-transport` | mockable HTTP transport seam; adds cpp-httplib + nlohmann/json | — |
+| 1 | `feat/http-transport` | ✅ **merged (#1)** — mockable HTTP transport seam; adds cpp-httplib + nlohmann/json | — |
 | 2 | `feat/anthropic-client` | `AnthropicClient`: native tool-calling, streaming, cancel threaded in, usage in `LLMResponse` | 1 |
 | 3 | `feat/openai-client` | `OpenAIClient`, same contract | 1 |
 | 4 | `feat/retries-backoff` | client retry/backoff branching on retryable vs fatal | 2 |
@@ -120,7 +127,7 @@ Rows 5/6 are independent — parallelize freely. Milestone when all merged: **12
 - **Post-1.0 (optional):** the "Jarvis" demo assistant (CLI → voice → phone → cloud); **`FactStore`** long-term memory (separate retrieval interface + `recall_facts`/`remember_fact` tools — embeddings never enter the core lib). Off the critical path.
 
 ## Current status
-Phase 0 complete, then hardened per [docs/specs/2026-07-06-phase0-hardening-design.md](docs/specs/2026-07-06-phase0-hardening-design.md) (message round-trip, tool contract v2, agent handle semantics, registry anti-shadowing, CMake install/export, TSan CI). Verified locally: **41 test cases / 135 assertions pass** under MSVC (as of the builder/mock fix PR). Backend factories (`anthropic`/`openai`/`ollama`) are **stubs that throw** until Phase 1 — use `MockLLM` for now. **Pushed to GitHub: <https://github.com/Ambar-Gupta22/corvus>** — from Phase 1 onward, work lands via feature-branch PRs (see Git workflow below); `main` stays green.
+**Phase 1 in progress.** Phase 0 complete, then hardened per [docs/specs/2026-07-06-phase0-hardening-design.md](docs/specs/2026-07-06-phase0-hardening-design.md) (message round-trip, tool contract v2, agent handle semantics, registry anti-shadowing, CMake install/export, TSan CI). Merged PRs: **#1** HTTP transport seam (Phase 1 branch 1), **#2** builder/mock fixes (independent agents per `build()`, unique MockLLM ids, version-sync test). **Next up: `feat/anthropic-client`** (branch 2). Verified locally: **41 test cases / 135 assertions pass** under MSVC. Backend factories (`anthropic`/`openai`/`ollama`) are still **stubs that throw** — use `MockLLM` for now. Known gaps + their fixing PRs: [docs/CODE_TOUR.md Appendix A](docs/CODE_TOUR.md#appendix-a--sharp-edges-index). Repo: <https://github.com/Ambar-Gupta22/corvus> — work lands via feature-branch PRs (see Git workflow); `main` stays green.
 
 ## Open / parked decisions (not yet finalized)
 Consolidated so future sessions don't assume these are settled:
@@ -135,7 +142,7 @@ Consolidated so future sessions don't assume these are settled:
 8. **Tool access control (RBAC)** — no access control in Phase 0; `ToolRegistry` is a dumb thread-safe map. Per-agent isolation works today by composition (each agent's builder gets only its allowed tools — an agent can't call a tool that isn't in its registry). A real policy layer (`ToolPolicy` / filtered-registry view, optionally tool **scopes** with execution-time denial + audit) is **Phase 4** (multi-agent orchestration). Keep the registry dumb; put policy in a thin layer above it. **`ToolPolicy` (per-agent "may this agent use this tool?") is distinct from `ToolGuard` (per-tool "is this call itself safe?", decision 9) — don't conflate them; the guard ships much earlier.**
 9. **Built-in tools — phasing + safety.** Ship by dependency + blast radius, not all at once: **Calculator + guarded HttpRequest** (Phase 1), **jailed File I/O** (Phase 2), **guarded Shell** (Phase 4, with RBAC). **WebSearch is *not* owned** — comes free via MCP (Phase 3); shipping a provider integration + key management contradicts local-first and is a maintenance tax. Every dangerous tool carries a **`ToolGuard`** — a *per-tool* safety primitive (path jail / private-IP + scheme allowlist / timeout / output cap) inside `execute()`, independent of Phase-4 RBAC. **Note: HttpRequest is *not* a "safe" tool** — raw outbound HTTP from an LLM is an SSRF risk (cloud-metadata `169.254.169.254`, internal services); it ships only with its guard. Separately, the **agent loop needs a per-tool timeout** (Phase 1): today one hung `execute()` freezes the whole agent thread, which is disqualifying for the ROS2/game/HFT targets — the single highest-value gap to close.
 
-See the 👉 notes in [docs/phase-0-explained.md](docs/phase-0-explained.md) for the reasoning behind 3–6.
+See the 👉 notes in [docs/history/phase-0-explained.md](docs/history/phase-0-explained.md) for the reasoning behind 3–6.
 
 ## Extension model (important)
 Primary extension path is **MCP** (process-isolated, no ABI risk) and **user-defined C++ tools** via `makeTool`/`Tool`. Native in-process `.so`/DLL plugins, if ever added, MUST use a **pure C ABI** (never pass `std::string`/`std::shared_ptr` across the boundary) — currently leaning MCP-only.

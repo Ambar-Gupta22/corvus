@@ -55,6 +55,8 @@ public:
 };
 
 using HttpTransportPtr = std::shared_ptr<HttpTransport>;
+// The default transport keeps no state between calls, so one instance may be
+// shared across threads. MockHttpTransport may not (see its header).
 
 // The production transport (cpp-httplib). HTTPS works when the library was
 // built with OpenSSL (CORVUS_ENABLE_TLS); otherwise https URLs fail with a

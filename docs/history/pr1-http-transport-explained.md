@@ -1,6 +1,11 @@
 # PR 1 explained — the HTTP transport seam
 
-*Plain-language companion to [PR #1](https://github.com/Ambar-Gupta22/corvus/pull/1). What changed, why it changed, and what the review caught. If you want the formal contracts, read the [design spec](specs/2026-07-15-cloud-clients-design.md); this file is the "explain it like I'm new here" version.*
+> **Historical snapshot** (written July 15, 2026, at the merge of PR #1). Still accurate for the
+> transport; test counts have grown since. The current reference is
+> [CODE_TOUR.md Part 5](../CODE_TOUR.md#part-5--the-wire-http-transport-pr-1).
+
+
+*Plain-language companion to [PR #1](https://github.com/Ambar-Gupta22/corvus/pull/1). What changed, why it changed, and what the review caught. If you want the formal contracts, read the [design spec](../specs/2026-07-15-cloud-clients-design.md); this file is the "explain it like I'm new here" version.*
 
 ---
 
@@ -90,7 +95,7 @@ The pattern in 5 and 6: the transport doesn't trust its inputs *even though toda
 
 ## What this unlocks
 
-With the seam in place, the rest of the cloud client subsystem proceeds ([plan](plans/2026-07-15-cloud-clients-plan.md)):
+With the seam in place, the rest of the cloud client subsystem proceeds ([plan](../plans/2026-07-15-cloud-clients-plan.md)):
 
 - **PR 2** — `AnthropicClient`: real wire format, SSE streaming, typed errors (`LLMError`), token usage. Tested entirely through `MockHttpTransport`.
 - **PR 3** — `OpenAIClient`, same treatment.

@@ -40,6 +40,11 @@ public:
         return *this;
     }
 
+    // Validates and assembles an Agent. Throws std::runtime_error if no model
+    // was set, the strategy isn't ToolCalling, or maxIterations < 1; throws
+    // std::invalid_argument if a withTool() name collides with a different
+    // tool already in the registry. Unset memory/registry get fresh defaults
+    // per call, so building twice yields two independent agents.
     Agent build();
 
 private:

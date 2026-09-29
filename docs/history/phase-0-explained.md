@@ -1,8 +1,14 @@
 # Phase 0, explained in plain language
 
+> **Historical snapshot** (written July 1, 2026; partially annotated after the July 6 hardening).
+> Parts are stale: the tool contract, `Message` fields, `Agent` semantics, and test counts changed. The
+> current reference is [CODE_TOUR.md](../CODE_TOUR.md); what changed and why is in
+> [HISTORY.md](../HISTORY.md).
+
+
 This document walks through **everything** built in Phase 0 of `corvus`, in simple language, with the **reason** behind each choice and the **alternatives** that were rejected. Read it top to bottom — each part builds on the last. Wherever you might want to weigh in, there's a **👉 Your input** note.
 
-> ⚠️ **Update (2026-07-06):** after this was written, Phase 0 was hardened — see [specs/2026-07-06-phase0-hardening-design.md](specs/2026-07-06-phase0-hardening-design.md). The biggest contract changes, in the same plain language:
+> ⚠️ **Update (2026-07-06):** after this was written, Phase 0 was hardened — see [specs/2026-07-06-phase0-hardening-design.md](../specs/2026-07-06-phase0-hardening-design.md). The biggest contract changes, in the same plain language:
 > - Tools now return a typed **`ToolResult`** (ok / retryable error / fatal error) instead of a bare string, and `execute` receives a **`ToolContext`** (cancel signal + deadline). The 👉 question about "string vs typed result" below is **resolved: typed**. The simple string-lambda `makeTool` form still exists.
 > - `Message` now also records **which tool calls the assistant made and their ids**, so the transcript can be replayed to real providers in Phase 1.
 > - `Agent` is a safe shared handle: destroying it mid-`runAsync` is fine, and starting two overlapping runs on one agent throws instead of garbling the conversation.
@@ -35,7 +41,7 @@ Phase 0 builds all of these pieces and the loop — with a fake brain so we can 
 
 ## 2. The Tool — the agent's "hands"
 
-**File:** [include/corvus/tool.h](../include/corvus/tool.h)
+**File:** [include/corvus/tool.h](../../include/corvus/tool.h)
 
 A **Tool** is anything the agent can *do*. A weather lookup, a calculator, a web search — each is a Tool. The interface is deliberately tiny:
 
@@ -78,7 +84,7 @@ No class, no boilerplate. `FunctionTool` (the class behind `makeTool`) also **au
 
 ## 3. The Schema builder — describing a tool's arguments without writing JSON by hand
 
-**Files:** [include/corvus/schema.h](../include/corvus/schema.h), [src/schema.cpp](../src/schema.cpp)
+**Files:** [include/corvus/schema.h](../../include/corvus/schema.h), [src/schema.cpp](../../src/schema.cpp)
 
 The model needs to know what arguments a tool takes. The standard format is **JSON Schema** — but writing JSON Schema by hand is fiddly and error-prone:
 
@@ -104,7 +110,7 @@ That generates the JSON above automatically. `.str` = string field, `.num`/`.int
 
 ## 4. The ToolRegistry — the agent's "toolbox"
 
-**Files:** [include/corvus/tool_registry.h](../include/corvus/tool_registry.h), [src/tool_registry.cpp](../src/tool_registry.cpp)
+**Files:** [include/corvus/tool_registry.h](../../include/corvus/tool_registry.h), [src/tool_registry.cpp](../../src/tool_registry.cpp)
 
 The registry is a labeled box that holds all the tools. You put tools in by name; the agent looks them up by name when the model says "call `weather`".
 
@@ -125,7 +131,7 @@ std::vector<ToolPtr> all() const;  // list all (used to tell the model what's av
 
 ## 5. Memory — the agent's short-term recall
 
-**Files:** [include/corvus/memory.h](../include/corvus/memory.h), [src/memory.cpp](../src/memory.cpp)
+**Files:** [include/corvus/memory.h](../../include/corvus/memory.h), [src/memory.cpp](../../src/memory.cpp)
 
 The LLM forgets everything between calls — it has no memory of its own. So *we* have to remember the conversation and send the whole history back every time. That history is what `Memory` holds:
 
@@ -143,13 +149,13 @@ Each turn — the user's task, the model's replies, every tool result — gets a
 
 By making it an interface, you swap storage with **one line** (`.withMemory(...)`) and nothing else in the code changes. This is the **Strategy pattern** — same idea applied to LLM backends and reasoning too.
 
-👉 **Your input:** ~~Right now memory keeps the *entire* history forever ... "keep last N messages" or "summarize old ones"?~~ **ANSWERED (2026-07-04)** — full design in [docs/specs/2026-07-04-memory-design.md](specs/2026-07-04-memory-design.md). Short version: it's not either/or, and not a fixed tier hierarchy — bounding became independent, *opt-in* policies behind this same `Memory` interface. Unbounded stays the default (honest — never silently drop data); `lastN` arrives Phase 1 as a cheap growth cap (documented as NOT a fit guarantee); real token budgeting (`maxTokens`/`autoWindow`) arrives Phase 2 once local backends provide a free exact tokenizer; summarization is a Phase 3+ opt-in decorator (the only memory allowed to call an LLM); long-term facts live in a separate `FactStore` (post-1.0), never inside the turn-by-turn context path. From Phase 1 the loop also carries an always-on backstop for the provider's context-overflow error: truncate oversized message → trim harder → retry → clean failure.
+👉 **Your input:** ~~Right now memory keeps the *entire* history forever ... "keep last N messages" or "summarize old ones"?~~ **ANSWERED (2026-07-04)** — full design in [docs/specs/2026-07-04-memory-design.md](../specs/2026-07-04-memory-design.md). Short version: it's not either/or, and not a fixed tier hierarchy — bounding became independent, *opt-in* policies behind this same `Memory` interface. Unbounded stays the default (honest — never silently drop data); `lastN` arrives Phase 1 as a cheap growth cap (documented as NOT a fit guarantee); real token budgeting (`maxTokens`/`autoWindow`) arrives Phase 2 once local backends provide a free exact tokenizer; summarization is a Phase 3+ opt-in decorator (the only memory allowed to call an LLM); long-term facts live in a separate `FactStore` (post-1.0), never inside the turn-by-turn context path. From Phase 1 the loop also carries an always-on backstop for the provider's context-overflow error: truncate oversized message → trim harder → retry → clean failure.
 
 ---
 
 ## 6. The LLMClient — the agent's "brain" (and the abstraction over it)
 
-**File:** [include/corvus/llm_client.h](../include/corvus/llm_client.h)
+**File:** [include/corvus/llm_client.h](../../include/corvus/llm_client.h)
 
 This is the seam between the agent and whatever model is doing the thinking. It's an interface so that Anthropic, OpenAI, Ollama, and llama.cpp all look identical to the agent:
 
@@ -169,15 +175,15 @@ Read `complete` as: "here's the conversation so far and the tools you're allowed
 
 **Why the `onToken` callback?** For **streaming** — showing the model's answer word-by-word as it's generated, instead of waiting for the whole thing. Important for a responsive feel. It's optional; pass nothing and you get the full answer at once.
 
-**Why are `anthropic()`, `openai()`, `ollama()` declared here but not implemented yet?** So the **public API is locked in from the start**. The function signatures people will call are decided now; Phase 1 just fills in the bodies. Right now they throw a clear message ("lands in Phase 1 — use MockLLM"). See [src/clients_stub.cpp](../src/clients_stub.cpp). This means the library *compiles and links today* — you can build against the real API shape before the real backends exist.
+**Why are `anthropic()`, `openai()`, `ollama()` declared here but not implemented yet?** So the **public API is locked in from the start**. The function signatures people will call are decided now; Phase 1 just fills in the bodies. Right now they throw a clear message ("lands in Phase 1 — use MockLLM"). See [src/clients_stub.cpp](../../src/clients_stub.cpp). This means the library *compiles and links today* — you can build against the real API shape before the real backends exist.
 
 ---
 
 ## 7. The Agent — the loop that ties it all together
 
-**Files:** [include/corvus/agent.h](../include/corvus/agent.h), [src/agent.cpp](../src/agent.cpp) — **this is the heart of Phase 0.**
+**Files:** [include/corvus/agent.h](../../include/corvus/agent.h), [src/agent.cpp](../../src/agent.cpp) — **this is the heart of Phase 0.**
 
-The Agent owns a brain (LLMClient), a toolbox (ToolRegistry), memory, and a couple of safety limits. Its `run()` does exactly the loop from section 1. Step by step, here's what [src/agent.cpp](../src/agent.cpp) does:
+The Agent owns a brain (LLMClient), a toolbox (ToolRegistry), memory, and a couple of safety limits. Its `run()` does exactly the loop from section 1. Step by step, here's what [src/agent.cpp](../../src/agent.cpp) does:
 
 ```
 1. Build the list of tool descriptions to show the model (from the registry).
@@ -228,7 +234,7 @@ So `runAsync()` runs the agent on a **separate thread** and immediately hands ba
 
 ## 8. AgentBuilder — assembling an agent without a giant constructor
 
-**Files:** [include/corvus/agent_builder.h](../include/corvus/agent_builder.h), [src/agent_builder.cpp](../src/agent_builder.cpp)
+**Files:** [include/corvus/agent_builder.h](../../include/corvus/agent_builder.h), [src/agent_builder.cpp](../../src/agent_builder.cpp)
 
 Instead of one constructor with seven arguments (easy to get the order wrong), you build an agent by naming each piece:
 
@@ -251,7 +257,7 @@ This is the **public face** of the whole library — the first thing a new user 
 
 ## 9. MockLLM — the fake brain that makes offline testing possible
 
-**Files:** [include/corvus/mock_llm.h](../include/corvus/mock_llm.h), [src/mock_llm.cpp](../src/mock_llm.cpp)
+**Files:** [include/corvus/mock_llm.h](../../include/corvus/mock_llm.h), [src/mock_llm.cpp](../../src/mock_llm.cpp)
 
 MockLLM is a fake LLMClient. You tell it exactly what to "say", in order:
 
@@ -269,7 +275,7 @@ This is a real engineering signal: serious frameworks ship a way to test agents 
 
 ## 10. The Strategy enum — choosing how the agent reasons
 
-**File:** [include/corvus/strategy.h](../include/corvus/strategy.h)
+**File:** [include/corvus/strategy.h](../../include/corvus/strategy.h)
 
 ```cpp
 enum class Strategy { ToolCalling, ReAct, PlanAndExecute };
@@ -290,14 +296,14 @@ These don't add features, but they're what separate a serious project from a hob
 
 | File | What it is | Why it matters |
 |------|-----------|----------------|
-| [CMakeLists.txt](../CMakeLists.txt) | The build recipe. Defines the `corvus::corvus` library. | C++ has no standard package manager. CMake + "FetchContent" is how people add your library in **4 lines**. Low setup friction = adoption. |
-| [tests/](../tests/) (doctest) | Automated tests for registry, schema, agent loop. | Proof the code works, and a safety net so future changes don't break old behavior. Uses MockLLM → runs offline. |
-| [.github/workflows/ci.yml](../.github/workflows/ci.yml) | Runs the build + tests automatically on Linux, macOS, Windows + a "sanitizer" pass that catches memory bugs. | The green ✅ badge is instant credibility. It also means *I* don't need your old compiler to verify — the cloud does it on every push. |
-| [.clang-format](../.clang-format) / [.clang-tidy](../.clang-tidy) | Auto-formatting + automated code-smell checks. | Consistent style and catches bugs before review. Signals professionalism. |
-| [LICENSE](../LICENSE) (MIT) | Legal permission to use the code. | MIT = anyone (including companies) can use it freely = far more adoption than restrictive licenses. |
-| [README.md](../README.md) | The landing page. | Most people decide whether to star within 10 seconds of reading it. |
-| [CONTRIBUTING.md](../CONTRIBUTING.md) | "How to add a tool in 5 minutes." | Turns curious readers into contributors on day one. |
-| [examples/mock_quickstart.cpp](../examples/mock_quickstart.cpp) | A runnable demo using MockLLM. | Shows the API works, offline, today. |
+| [CMakeLists.txt](../../CMakeLists.txt) | The build recipe. Defines the `corvus::corvus` library. | C++ has no standard package manager. CMake + "FetchContent" is how people add your library in **4 lines**. Low setup friction = adoption. |
+| [tests/](../../tests/) (doctest) | Automated tests for registry, schema, agent loop. | Proof the code works, and a safety net so future changes don't break old behavior. Uses MockLLM → runs offline. |
+| [.github/workflows/ci.yml](../../.github/workflows/ci.yml) | Runs the build + tests automatically on Linux, macOS, Windows + a "sanitizer" pass that catches memory bugs. | The green ✅ badge is instant credibility. It also means *I* don't need your old compiler to verify — the cloud does it on every push. |
+| [.clang-format](../../.clang-format) / [.clang-tidy](../../.clang-tidy) | Auto-formatting + automated code-smell checks. | Consistent style and catches bugs before review. Signals professionalism. |
+| [LICENSE](../../LICENSE) (MIT) | Legal permission to use the code. | MIT = anyone (including companies) can use it freely = far more adoption than restrictive licenses. |
+| [README.md](../../README.md) | The landing page. | Most people decide whether to star within 10 seconds of reading it. |
+| [CONTRIBUTING.md](../../CONTRIBUTING.md) | "How to add a tool in 5 minutes." | Turns curious readers into contributors on day one. |
+| [examples/mock_quickstart.cpp](../../examples/mock_quickstart.cpp) | A runnable demo using MockLLM. | Shows the API works, offline, today. |
 
 👉 **Your input:** The copyright line says "corvus contributors". Want your name on it instead? And the README has a `<you>` placeholder for the GitHub URL — tell me your GitHub username when we push.
 
@@ -327,7 +333,7 @@ Good engineering is also about *not* building things too early ("YAGNI" — You 
 - **JSON library + HTTP library** → Phase 1, when we actually call real APIs. Keeps Phase 0 dependency-free.
 - **MCP client** → Phase 3.
 - **Multi-agent orchestration** → Phase 4. Get one agent rock-solid first.
-- **Memory trimming/summarization** → designed (see [memory spec](specs/2026-07-04-memory-design.md)): `lastN` + overflow backstop Phase 1, token budgets Phase 2, summary Phase 3+, `FactStore` post-1.0.
+- **Memory trimming/summarization** → designed (see [memory spec](../specs/2026-07-04-memory-design.md)): `lastN` + overflow backstop Phase 1, token budgets Phase 2, summary Phase 3+, `FactStore` post-1.0.
 - **Thread pool** for async → only if simple `std::async` proves insufficient.
 
 ---

@@ -29,6 +29,9 @@ public:
     // narrate before acting) — lets tests exercise mid-run assistant text.
     MockLLM& replyAndCallTool(std::string text, std::string toolName, std::string argumentsJson);
 
+    // Pops the next queued turn, ignoring `messages` and `tools`. Its text (if
+    // any) is sent to onToken as one chunk. An empty queue returns the text
+    // "[MockLLM] no queued response" rather than throwing. Not thread-safe.
     LLMResponse complete(const std::vector<Message>& messages,
                          const std::vector<ToolSpec>& tools,
                          const TokenCallback& onToken = nullptr) override;

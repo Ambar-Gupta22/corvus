@@ -3,7 +3,7 @@
 **Date:** 2026-07-04
 **Status:** Draft for review
 **Resolves:** open decision #5 in CLAUDE.md (memory trimming) and expands it into a full memory roadmap.
-**Related:** [2026-06-29-jarvis-cpp-design.md](2026-06-29-jarvis-cpp-design.md) (main design), [phase-0-explained.md](../phase-0-explained.md) §5.
+**Related:** [2026-06-29-jarvis-cpp-design.md](2026-06-29-jarvis-cpp-design.md) (main design), [phase-0-explained.md](../history/phase-0-explained.md) §5.
 
 ## 1. Problem
 

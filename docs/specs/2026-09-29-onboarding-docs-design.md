@@ -1,7 +1,7 @@
 # Onboarding & architecture docs — design
 
 **Date:** 2026-09-29
-**Status:** Approved (brainstorming), pending implementation plan
+**Status:** Implemented (docs PR following PR #2)
 **Branch:** `docs/onboarding-guide` (one PR)
 
 ## Problem
@@ -22,8 +22,8 @@ phase-scoped narratives, some of which predate the Phase 0 hardening and are now
 
 ## Non-goals
 
-- No code behavior changes. No public signature changes. Sharp edges found while writing are
-  documented and filed as follow-up issues, not fixed here.
+- No code behavior changes. No public signature changes. The real defects found while writing were
+  fixed first in a separate PR (#2); the docs describe the fixed code.
 - No new doc tooling (Doxygen site, mkdocs). Plain GitHub-rendered Markdown + Mermaid.
 - Not rewriting the specs/plans — they stay as the decision record; new docs link to them.
 
@@ -39,7 +39,7 @@ docs/
     phase-0-explained.md              MOVED (git mv) + staleness banner
     pr1-http-transport-explained.md   MOVED (git mv) + staleness banner
   specs/, plans/     unchanged (plus this spec)
-include/corvus/*.h   comment-only: /// doc-comments on every public declaration
+include/corvus/*.h   comment-only: fill comment gaps on public declarations (existing // style)
 README.md, CONTRIBUTING.md, CLAUDE.md, docs/specs/2026-07-04-memory-design.md
                      link fixes + maintenance rule
 ```
@@ -281,8 +281,8 @@ the trace.
 **Appendix A — Sharp-edges index.** Every sharp edge from Parts 1–8 in one table: edge ·
 file:line · intended / known gap (PR) / bug candidate. The bug candidates found so far are the
 `build()`-twice duplicate throw, MockLLM id reuse, the ReAct-phase message mismatch, and the
-umbrella/version-sync gaps. They get documented in the tour, not fixed in this PR (no behavior
-changes); each one becomes a follow-up issue.
+version-sync gap. **Resolved:** all four were fixed in PR #2 before the docs landed, and are listed
+in the index as "fixed in PR #2"; the umbrella omission is recorded as intended.
 
 **Appendix B — Design patterns → code locations.** Cross-reference back to ARCHITECTURE §4,
 pointing at the exact file:line where each pattern lives.
@@ -314,8 +314,9 @@ Every entry cites commit hashes so `git show <hash>` works as a revision aid.
 
 ## 5. Header doc-comments
 
-`///` comments on every public class, struct, enum, and function in `include/corvus/*.h`: one-line
-brief, params, return, throws, thread-safety where relevant. Match existing comment style/density.
+Fill comment gaps on public declarations in `include/corvus/*.h`: what it does, throws,
+thread-safety where relevant. Use the existing `//` style (converting to `///` would churn every
+header for no reader benefit).
 Comment-only diff — no signature, include, or behavior change. Enforced by the build + test run
 staying green and a diff review showing only comment lines changed.
 

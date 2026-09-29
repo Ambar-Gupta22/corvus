@@ -108,7 +108,7 @@ Framework-first; each phase is its own spec → plan → build cycle, landing as
 
 - [x] **Phase 0 — foundations**: agent loop, tool system, memory, MockLLM, 3-OS CI + sanitizers ([hardened](docs/specs/2026-07-06-phase0-hardening-design.md))
 - [ ] **Phase 1 — cloud backends** ← *in progress*
-  - [x] Mockable HTTP transport seam ([PR #1](https://github.com/Ambar-Gupta22/corvus/pull/1), [explainer](docs/pr1-http-transport-explained.md))
+  - [x] Mockable HTTP transport seam ([PR #1](https://github.com/Ambar-Gupta22/corvus/pull/1), [explainer](docs/history/pr1-http-transport-explained.md))
   - [ ] `AnthropicClient` — native tool-calling, SSE streaming, typed errors
   - [ ] `OpenAIClient` (Chat Completions — also unlocks Ollama/vLLM/OpenRouter via `baseUrl`)
   - [ ] Retries + backoff · per-tool timeout · SqliteMemory · memory trimming · usage/cost · Calculator + guarded HttpRequest tools
@@ -120,11 +120,14 @@ Framework-first; each phase is its own spec → plan → build cycle, landing as
 
 ## Documentation
 
+**New here? Start at the [docs index](docs/README.md)** — it has reading paths for newcomers, returning contributors, and feature work.
+
 | Doc | What it covers |
 |---|---|
-| [Design & roadmap spec](docs/specs/2026-06-29-jarvis-cpp-design.md) | Architecture, decisions, phases |
-| [Phase 0 explained](docs/phase-0-explained.md) | Plain-language tour of the core runtime |
-| [PR 1 explained](docs/pr1-http-transport-explained.md) | The HTTP transport seam — what, why, and what review caught |
+| [Architecture](docs/ARCHITECTURE.md) | What corvus is, component map, design patterns, invariants, decisions |
+| [Code tour](docs/CODE_TOUR.md) | Every file and function in reading order — what, why, tests, sharp edges |
+| [History](docs/HISTORY.md) | How the code got here, era by era, with commits |
+| [Design & roadmap spec](docs/specs/2026-06-29-jarvis-cpp-design.md) | Original architecture, decisions, phases |
 | [Cloud clients design](docs/specs/2026-07-15-cloud-clients-design.md) | Phase 1 client subsystem spec |
 | [Memory design](docs/specs/2026-07-04-memory-design.md) | Trimming policies, overflow backstop, phasing |
 

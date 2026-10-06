@@ -5,6 +5,7 @@
 
 #include "corvus/agent.h"
 #include "corvus/agent_builder.h"
+#include "corvus/args.h"
 #include "corvus/llm_client.h"
 #include "corvus/memory.h"
 #include "corvus/mock_llm.h"
@@ -12,6 +13,7 @@
 #include "corvus/strategy.h"
 #include "corvus/tool.h"
 #include "corvus/tool_registry.h"
+#include "corvus/typed_tool.h"
 #include "corvus/types.h"
 
 #define CORVUS_VERSION_MAJOR 0

@@ -16,26 +16,32 @@ Tests use a deterministic `MockLLM` — no API key, no network. Add a test for e
 
 ## Add a tool in 5 minutes
 
-The common case needs no class — just `makeTool`:
+The common case needs no class and no JSON parsing — declare the args as a struct and use `typedTool`:
 
 ```cpp
 #include <corvus/corvus.h>
 
-auto myTool = corvus::makeTool(
-    "stock_price",                                   // name the model calls
-    "Get the latest price for a stock ticker.",      // the model reads this to decide when to call
-    corvus::schema().str("ticker", "e.g. AAPL"),     // JSON schema, generated for you
-    [](const std::string& args) -> std::string {     // body: args is a JSON object string
+struct StockArgs { std::string ticker; };
+
+auto myTool = corvus::typedTool<StockArgs>(
+        "stock_price",                                   // name the model calls
+        "Get the latest price for a stock ticker.")      // the model reads this to decide when to call
+    .field("ticker", &StockArgs::ticker, "e.g. AAPL")   // schema entry + parsing, from one line
+    .run([](const StockArgs& a) -> std::string {         // body: args already parsed and checked
         // ... fetch and return the result as text ...
-        return "AAPL: $192.30";
+        return a.ticker + ": $192.30";
     });
 
 agentBuilder.withTool(myTool);
 ```
 
+Field types map automatically: `std::string`, `bool`, integers, floating point, and `std::optional<...>` of those (always optional). Pass `corvus::Optional` as a fourth argument to make a plain field optional; it then keeps the struct's default when absent. Bad args from the model come back to it as `"ERROR: invalid arguments: ..."` so it can retry.
+
+Need the raw JSON text instead? `corvus::makeTool(name, description, corvus::schema().str(...), [](const std::string& args) { ... })` takes a string body, and `corvus::Args::parse(args)` reads it without a JSON library of your own.
+
 Three rules:
-1. **Never throw from a tool.** In the simple form above, a thrown exception is caught and becomes a fatal error. To report failures deliberately, use the full form, which returns a typed `corvus::ToolResult` — `ToolResult::ok(text)`, `ToolResult::retryable(why)`, or `ToolResult::fatal(why)`; the model sees failures as `"ERROR: <why>"`. `makeTool` enforces never-throw for lambdas; `Tool` subclasses must catch everything themselves.
-2. **Honor cancellation if your tool can block.** The full form receives a `corvus::ToolContext`; check `ctx.cancel.cancelled()` and `ctx.expired()` in long-running work. C++ can't stop a thread for you.
+1. **Never throw from a tool.** In the simple forms above, a thrown exception is caught and becomes a fatal error. To report failures deliberately, use the full form, which returns a typed `corvus::ToolResult` — `ToolResult::ok(text)`, `ToolResult::retryable(why)`, or `ToolResult::fatal(why)`; the model sees failures as `"ERROR: <why>"`. `typedTool` and `makeTool` enforce never-throw for lambdas; `Tool` subclasses must catch everything themselves.
+2. **Honor cancellation if your tool can block.** The full form (`run([](const T&, const corvus::ToolContext& ctx) -> corvus::ToolResult {...})` for typed tools) receives a `corvus::ToolContext`; check `ctx.cancel.cancelled()` and `ctx.expired()` in long-running work. C++ can't stop a thread for you.
 3. **Write a good `description`.** The model decides whether to call your tool based entirely on it.
 
 ```cpp

@@ -218,6 +218,25 @@ earlier explainers moved to [history/](history/) as dated snapshots.
 
 ---
 
+## Era 9 — Typed tools (October 6, 2026)
+
+**Branch:** `feat/typed-tools`. ([spec](specs/2026-10-06-typed-tools-design.md))
+
+Writing a C++ tool used to mean hand-parsing a raw JSON string while keeping a separate `schema()`
+chain in sync with that parsing. Now a tool's args are a struct:
+`typedTool<T>(name, desc).field("x", &T::x, "desc")...run(fn)`. Each `field()` call produces both
+the schema entry and the parsing, so the two cannot drift. Bad args reach the model as a retryable
+`ERROR: invalid arguments: <why>`.
+
+Underneath sits `corvus::Args`, a move-only view over the parsed args. It is the first public use
+of nlohmann/json, kept behind a pimpl so no third-party header enters `include/corvus/`.
+`feat/arg-validation` is expected to reuse it.
+
+Additive only: no existing signature changed. The quickstart, README and CONTRIBUTING now lead with
+the typed form. 16 new tests (57 cases total).
+
+---
+
 ## What's next
 
 The remaining Phase 1 branches (Anthropic and OpenAI clients, retries, per-tool timeout, SQLite

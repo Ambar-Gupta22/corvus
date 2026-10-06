@@ -34,14 +34,16 @@ This runs today, offline, with no API key (a trimmed version of [`examples/mock_
 #include <iostream>
 #include <corvus/corvus.h>
 
+struct CalcArgs { std::string expression; };
+
 int main() {
     using namespace corvus;
 
-    // A tool is one expression: name, description, argument schema, body.
-    auto calculator = makeTool(
-        "calculator", "Evaluates a simple arithmetic expression.",
-        schema().str("expression", "e.g. '2 + 2'"),
-        [](const std::string& args) -> std::string { return "4"; });
+    // A tool is one expression. Its args arrive as a struct: corvus builds the
+    // JSON Schema from the field list and parses each call into CalcArgs.
+    auto calculator = typedTool<CalcArgs>("calculator", "Evaluates a simple arithmetic expression.")
+        .field("expression", &CalcArgs::expression, "e.g. '2 + 2'")
+        .run([](const CalcArgs& a) -> std::string { return "4"; });
 
     // A scripted model: first it calls the tool, then it answers.
     auto model = std::make_shared<MockLLM>();
@@ -123,7 +125,7 @@ flowchart LR
     Transport --> MockHttp["MockHttpTransport"]
 
     Registry --> Tool["Tool"]
-    Tool --> UserTools["Your tools<br/>makeTool / subclass"]
+    Tool --> UserTools["Your tools<br/>typedTool / makeTool / subclass"]
     Tool -.-> Builtins["Built-in tools<br/>+ ToolGuard"]
     Tool -.-> MCP["MCP servers<br/>via McpClient"]
 

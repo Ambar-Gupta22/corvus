@@ -64,7 +64,7 @@ flowchart TD
     Transport --- MockHttp["MockHttpTransport (tests)"]
 
     Registry --> Tool["Tool (interface)"]
-    Tool --- FnTool["FunctionTool / makeTool"]
+    Tool --- FnTool["FunctionTool / makeTool / typedTool"]
     FnTool -.->|schema from| Schema["Schema / schema()"]
     Memory --- InMem["InMemoryMemory"]
 
@@ -151,7 +151,7 @@ For the exact file and line of each pattern, see
 
 | Invariant | Why it matters | Enforced by |
 |---|---|---|
-| **Tools never throw.** Failure is a `ToolResult` with a status. | An exception escaping a tool would unwind the whole agent loop mid-conversation. The typed status lets the loop decide retry-vs-give-up; the model sees `"ERROR: …"` text. | `FunctionTool::execute` try/catch (for `makeTool` tools); convention for hand-written `Tool` subclasses; tests in `test_schema.cpp` |
+| **Tools never throw.** Failure is a `ToolResult` with a status. | An exception escaping a tool would unwind the whole agent loop mid-conversation. The typed status lets the loop decide retry-vs-give-up; the model sees `"ERROR: …"` text. | `FunctionTool::execute` try/catch (for `makeTool` and `typedTool` tools); convention for hand-written `Tool` subclasses; tests in `test_schema.cpp` |
 | **Blocking tools honor `ToolContext`.** | C++ can't kill a thread. A tool that ignores cancel/deadline can only be abandoned, never stopped. | Convention (documented in `tool.h`); the watchdog arrives with the per-tool-timeout PR |
 | **One run at a time per `Agent`.** | Two concurrent runs would interleave messages in the shared memory, producing a transcript no provider accepts. | `RunningGuard` throws `std::logic_error`; test "overlapping runs on one agent throw logic_error" |
 | **The future owns the run state.** | Destroying or moving an `Agent` mid-`runAsync` must not crash. | `runAsync` captures `shared_ptr<State>` by value; test "destroying the Agent mid-run is safe" |

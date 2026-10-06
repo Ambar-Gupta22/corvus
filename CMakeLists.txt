@@ -51,6 +51,7 @@ add_library(corvus
   src/tool_registry.cpp
   src/memory.cpp
   src/schema.cpp
+  src/args.cpp
   src/mock_llm.cpp
   src/agent.cpp
   src/agent_builder.cpp

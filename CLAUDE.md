@@ -39,6 +39,8 @@ All units are small, single-purpose, behind stable interfaces:
 | `Message`/`ToolCall`/`CancelToken`/`ToolContext`/`ToolResult` | `include/corvus/types.h` | Shared value types. `Message` round-trips provider wire formats (assistant turns keep `toolCalls`, tool turns keep `toolCallId`). |
 | `Tool` / `FunctionTool` / `makeTool` | `include/corvus/tool.h` | The agent's "hands". 3 sources — built-in, user C++, MCP — all uniform. `execute(args, ctx)` never throws; returns typed `ToolResult` (Ok/Retryable/Fatal/Timeout/Cancelled). `makeTool` has a simple string-lambda form and a context-aware form. |
 | `Schema` / `schema()` | `include/corvus/schema.h` | Fluent builder → JSON Schema string, so tool authors don't hand-write JSON. |
+| `Args` | `include/corvus/args.h` | Move-only view over a tool call's parsed JSON args (`parse`, `has`, strict `getString/getNumber/getInteger/getBool`). Pimpl over nlohmann/json — the json header stays in `src/`. Null = absent. |
+| `typedTool<T>` / `TypedToolBuilder` | `include/corvus/typed_tool.h` | **Preferred way to write a C++ tool.** Args are a struct; `.field(key, &T::m, desc[, Optional])` derives schema + parsing from one list; `.run(fn)` → `ToolPtr`. Bad args → `RetryableError("invalid arguments: …")`. Flat fields only. |
 | `ToolRegistry` | `include/corvus/tool_registry.h` | Thread-safe by-name toolbox. Duplicate names throw unless `OverwritePolicy::Replace` (anti-shadowing). |
 | `Memory` / `InMemoryMemory` | `include/corvus/memory.h` | Conversation history sent back each turn (LLM is stateless). `SqliteMemory` = Phase 1. Bounding = opt-in composable policies behind this same seam (`lastN` P1, `maxTokens`/`autoWindow` P2, summary P3+) — see memory spec. |
 | `LLMClient` + `ToolSpec`/`LLMResponse` | `include/corvus/llm_client.h` | Backend abstraction. Native tool-calling shape (text OR tool calls) + streaming `onToken`. |
@@ -103,13 +105,14 @@ Repo: <https://github.com/Ambar-Gupta22/corvus>. `main` is the public face — *
 | # | Branch | Delivers | Depends on |
 |---|--------|----------|------------|
 | 1 | `feat/http-transport` | ✅ **merged (#1)** — mockable HTTP transport seam; adds cpp-httplib + nlohmann/json | — |
+| 1b | `feat/typed-tools` | 🚧 **in review** — `Args` + `typedTool<T>` (struct-typed tool args, schema derived) | 1 |
 | 2 | `feat/anthropic-client` | `AnthropicClient`: native tool-calling, streaming, cancel threaded in, usage in `LLMResponse` | 1 |
 | 3 | `feat/openai-client` | `OpenAIClient`, same contract | 1 |
 | 4 | `feat/retries-backoff` | client retry/backoff branching on retryable vs fatal | 2 |
 | 5 | `feat/per-tool-timeout` | loop deadline via `ToolContext` + watchdog net | — |
 | 6 | `feat/sqlite-memory` | `SqliteMemory` (persistent, same `Memory` contract) | — |
 | 7 | `feat/memory-trim-backstop` | `lastN` policy + turn-boundary rules + overflow backstop | 2 (error surface) |
-| 8 | `feat/arg-validation` | per-call schema validation (required keys, primitive types, 64 KB cap) | 1 (json lib) |
+| 8 | `feat/arg-validation` | per-call schema validation (required keys, primitive types, 64 KB cap) — reuse `Args` for parsing | 1b |
 | 9 | `feat/tool-calculator` | Calculator built-in | 8 |
 | 10 | `feat/toolguard-http` | `ToolGuard` primitive + guarded HttpRequest (SSRF guard: scheme allowlist, private-IP block, caps) | 1, 5 |
 | 11 | `feat/usage-cost` | usage/cost surfaced in `RunResult` | 2 |
@@ -127,7 +130,7 @@ Rows 5/6 are independent — parallelize freely. Milestone when all merged: **12
 - **Post-1.0 (optional):** the "Jarvis" demo assistant (CLI → voice → phone → cloud); **`FactStore`** long-term memory (separate retrieval interface + `recall_facts`/`remember_fact` tools — embeddings never enter the core lib). Off the critical path.
 
 ## Current status
-**Phase 1 in progress.** Phase 0 complete, then hardened per [docs/specs/2026-07-06-phase0-hardening-design.md](docs/specs/2026-07-06-phase0-hardening-design.md) (message round-trip, tool contract v2, agent handle semantics, registry anti-shadowing, CMake install/export, TSan CI). Merged PRs: **#1** HTTP transport seam (Phase 1 branch 1), **#2** builder/mock fixes (independent agents per `build()`, unique MockLLM ids, version-sync test). **Next up: `feat/anthropic-client`** (branch 2). Verified locally: **41 test cases / 135 assertions pass** under MSVC. Backend factories (`anthropic`/`openai`/`ollama`) are still **stubs that throw** — use `MockLLM` for now. Known gaps + their fixing PRs: [docs/CODE_TOUR.md Appendix A](docs/CODE_TOUR.md#appendix-a--sharp-edges-index). Repo: <https://github.com/Ambar-Gupta22/corvus> — work lands via feature-branch PRs (see Git workflow); `main` stays green.
+**Phase 1 in progress.** Phase 0 complete, then hardened per [docs/specs/2026-07-06-phase0-hardening-design.md](docs/specs/2026-07-06-phase0-hardening-design.md) (message round-trip, tool contract v2, agent handle semantics, registry anti-shadowing, CMake install/export, TSan CI). Merged PRs: **#1** HTTP transport seam (Phase 1 branch 1), **#2** builder/mock fixes (independent agents per `build()`, unique MockLLM ids, version-sync test). **Next up: `feat/anthropic-client`** (branch 2). In review: **`feat/typed-tools`** (`Args` + `typedTool<T>`). Verified locally: **57 test cases / 198 assertions pass** under MSVC. Backend factories (`anthropic`/`openai`/`ollama`) are still **stubs that throw** — use `MockLLM` for now. Known gaps + their fixing PRs: [docs/CODE_TOUR.md Appendix A](docs/CODE_TOUR.md#appendix-a--sharp-edges-index). Repo: <https://github.com/Ambar-Gupta22/corvus> — work lands via feature-branch PRs (see Git workflow); `main` stays green.
 
 ## Open / parked decisions (not yet finalized)
 Consolidated so future sessions don't assume these are settled:
@@ -135,7 +138,7 @@ Consolidated so future sessions don't assume these are settled:
 1. **Library name** — `corvus` is a **placeholder/working name**. Final public name is TBD. It drives the namespace, `include/corvus/` dir, and CMake target, so renaming later = a sed sweep. ("Jarvis" stays reserved for the demo assistant regardless.)
 2. **Extension model** — leaning **MCP-only** for third-party extension. Undecided whether to also ship native in-process plugins (which would require a pure C ABI, never C++ types across the boundary).
 3. **Tool contract** — ~~string in/out vs typed result~~ **RESOLVED (2026-07-06 hardening):** `execute(const std::string& args, const ToolContext& ctx) -> ToolResult` — typed status (retryable vs fatal) for the loop, `"ERROR: ..."` text for the model, context for cancel/deadline.
-4. **Schema builder** — hand-rolled JSON string (dependency-free) vs rewrite on nlohmann/json once Phase 1 pulls it in. Leaning: switch to the lib for correctness.
+4. **Schema builder** — hand-rolled JSON string (dependency-free) vs rewrite on nlohmann/json once Phase 1 pulls it in. Leaning: switch to the lib for correctness. *Partly settled (2026-10-06, typed tools):* arg **parsing** uses nlohmann behind the `Args` pimpl; schema **emission** is still the hand-rolled `Schema` (typed tools reuse it).
 5. ~~**Memory trimming**~~ **RESOLVED (2026-07-04, full design):** memory = composable opt-in policies behind the unchanged `Memory` seam — unbounded stays default; `lastN` (P1, growth cap, NOT a fit guarantee) → `maxTokens`/`autoWindow` (P2, real fit) → `SummarizingMemory` (P3+, opt-in, only impl allowed to call an LLM) → `FactStore` (post-1.0, separate interface, not a `Memory`). Always-on overflow backstop from P1. Full rules + edge cases: [docs/specs/2026-07-04-memory-design.md](docs/specs/2026-07-04-memory-design.md).
 6. **Async execution** — using `std::async` (simple); a managed thread pool is deferred until proven necessary.
 7. **Branding/attribution** — repo is live at `Ambar-Gupta22/corvus`; README URLs point there. LICENSE copyright stays "corvus contributors" (fine for a community project — revisit only if a legal entity/name change demands it).

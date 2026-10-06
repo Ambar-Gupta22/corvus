@@ -6,17 +6,23 @@
 
 #include "corvus/corvus.h"
 
+// The tool's arguments, as a plain struct. corvus derives the JSON Schema the
+// model sees from the field() list below and parses each call into this.
+struct CalcArgs {
+    std::string expression;
+};
+
 int main() {
     using namespace corvus;
 
-    // A user-defined tool in one expression — no subclassing.
-    auto calculator = makeTool(
-        "calculator", "Evaluates a simple arithmetic expression.",
-        schema().str("expression", "e.g. '2 + 2'"),
-        [](const std::string& args) -> std::string {
-            // A real tool would parse `args` and compute. Kept trivial here.
-            return "4";
-        });
+    // A user-defined tool in one expression — no subclassing, no JSON parsing.
+    auto calculator =
+        typedTool<CalcArgs>("calculator", "Evaluates a simple arithmetic expression.")
+            .field("expression", &CalcArgs::expression, "e.g. '2 + 2'")
+            .run([](const CalcArgs& a) -> std::string {
+                // A real tool would evaluate a.expression. Kept trivial here.
+                return a.expression == "2 + 2" ? "4" : "unsupported";
+            });
 
     // Deterministic backend so the example runs without a key.
     auto mock = std::make_shared<MockLLM>();

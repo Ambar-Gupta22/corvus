@@ -18,6 +18,10 @@ flowchart BT
     strategy["strategy.h"]
     tool["tool.h"] --> types
     schema["schema.h"]
+    args["args.h"]
+    typed["typed_tool.h"] --> tool
+    typed --> schema
+    typed --> args
     registry["tool_registry.h"] --> tool
     memory["memory.h"] --> types
     llm["llm_client.h"] --> types
@@ -32,6 +36,7 @@ flowchart BT
     umbrella["corvus.h"] --> builder
     umbrella --> mock
     umbrella --> schema
+    umbrella --> typed
 ```
 
 **Every file entry follows the same template:**
@@ -71,7 +76,7 @@ helpers.
 
 | Symbol | What | Why |
 |---|---|---|
-| [`ToolCall`](../include/corvus/types.h#L17) | `{id, name, arguments}`: one tool the model asked to run. | `id` is assigned by the provider and **must be echoed back** with the result. `arguments` stays a raw JSON *string*: the core never parses JSON (Phase 0 had no JSON library; per-call validation arrives with `feat/arg-validation`). |
+| [`ToolCall`](../include/corvus/types.h#L17) | `{id, name, arguments}`: one tool the model asked to run. | `id` is assigned by the provider and **must be echoed back** with the result. `arguments` stays a raw JSON *string* here; the loop never parses it. A tool that wants typed values parses it with `Args` (Part 2; typed tools do this for you). Loop-level validation for every tool arrives with `feat/arg-validation`. |
 | [`Message`](../include/corvus/types.h#L26) | One conversation turn: `role`, `content`, plus `name`/`toolCallId` (tool turns) and `toolCalls` (assistant turns). | Carries enough to rebuild the exact wire format Anthropic/OpenAI expect. Both providers require (a) the assistant turn that *requested* tools to stay in history with its calls, and (b) each tool result to name the request it answers. Without these fields, a Phase 1 client could not replay memory to a real API. |
 | [`CancelToken`](../include/corvus/types.h#L36) | `cancel()` / `cancelled()` over a `shared_ptr<atomic<bool>>`. | **Copies share one flag.** You keep one copy, hand another to `runAsync`, and calling `cancel()` on yours is seen by the worker thread. The atomic makes cross-thread reads/writes safe without a lock. It's *cooperative*: the token only signals, and code must check it. |
 | [`ToolContext`](../include/corvus/types.h#L49) | `{cancel, deadline}` + [`expired()`](../include/corvus/types.h#L53). | Handed to every tool call. A default-constructed `time_point` (zero) means "no deadline", so `expired()` returns false. Exists because **C++ cannot force-stop a thread**: the only way to bound a tool is for the tool to poll these. |
@@ -195,6 +200,79 @@ corvus::schema().str("city", "city name").num("days", "forecast length", false)
 
 **Tests that pin it:** "schema builds a JSON Schema object with a required array", "schema escapes
 quotes in descriptions", "schema escapes control characters so the JSON stays valid".
+
+---
+
+### `include/corvus/args.h` + `src/args.cpp` · 54 + 110 lines · since `feat/typed-tools`
+
+**Role.** A read-only view over a tool call's arguments, parsed from the JSON object text the model
+sent. It lets tool authors read typed values without bringing their own JSON library. It does
+**not** validate against a schema; that is `feat/arg-validation`'s job (which should reuse this).
+
+**Walkthrough**
+
+| Symbol | What | Why |
+|---|---|---|
+| [`Args::parse(text, error)`](../include/corvus/args.h#L26) → [impl](../src/args.cpp#L20) | `std::optional<Args>`; nullopt for invalid JSON or a non-object top level, with a short reason in `*error`. Blank text parses as `{}`. | A no-arg tool call often arrives as an empty string. The reasons are written for the model, which receives them as `ERROR: invalid arguments: …`. |
+| [`has(key)`](../include/corvus/args.h#L35) | Present **and not null**. | Models often send `null` for an optional field they don't want to set. |
+| [`getString/getNumber/getInteger/getBool`](../include/corvus/args.h#L37) | Each returns `std::optional`; nullopt on absent, null, or the wrong JSON type. | Strict: `"5"` is not a number, `1` is not a boolean. Silent coercion hides model mistakes. |
+| [`getInteger`](../src/args.cpp#L75) | JSON integers in `int64` range, plus floats that are exactly integral (`3.0`). | Some providers serialise every number as a float. `3.5`, `1e300` and `2^63` are rejected. |
+| `Args::Impl` (in the .cpp) | Holds the `nlohmann::json` object. | Pimpl keeps the third-party header out of `include/corvus/` (the dependency is linked PRIVATE). That is also why `Args` is move-only. |
+
+**Sharp edges**
+- Unsigned values above `INT64_MAX` are rejected by `getInteger`. *Intended* (rare for tool args).
+- Nested objects and arrays have no getter. *Known gap*, matching the flat `Schema`.
+
+**Tests that pin it:** `test_args.cpp` (all 6 cases).
+
+---
+
+### `include/corvus/typed_tool.h` · 243 lines · since `feat/typed-tools`
+
+**Role.** Build a tool whose arguments arrive as a C++ struct. Each `field()` call records one
+member's schema entry **and** how to read it, so the schema the model sees and the parsing cannot
+drift apart. Header-only template; it touches JSON only through `Args`.
+
+```cpp
+struct MoveArgs { double x = 0; double y = 0; std::string frame = "map"; };
+
+auto move = corvus::typedTool<MoveArgs>("move_to", "Move the robot to (x, y)")
+    .field("x", &MoveArgs::x, "target x in metres")
+    .field("y", &MoveArgs::y, "target y in metres")
+    .field("frame", &MoveArgs::frame, "TF frame", corvus::Optional)
+    .run([&](const MoveArgs& a) { return robot.moveTo(a.x, a.y, a.frame); });
+```
+
+**Walkthrough**
+
+| Symbol | What | Why |
+|---|---|---|
+| [`Requiredness`](../include/corvus/typed_tool.h#L23) + `corvus::Required` / `corvus::Optional` | Whether the model must supply a field. | Reads better at the call site than the bare `bool` that `Schema` takes. |
+| [`typedTool<T>(name, desc)`](../include/corvus/typed_tool.h#L239) | Returns a `TypedToolBuilder<T>`. `T` must be default-constructible (`static_assert`). | Each call starts from `T{}`, so absent optional fields keep the struct's default initializers. |
+| [`field(key, &T::m, desc, req = Required)`](../include/corvus/typed_tool.h#L134) | Deduces the JSON type from the member type: `std::string`→string, `bool`→boolean, integers→integer, floating point→number, `std::optional<U>`→`U`'s type and always optional. Any other type is a compile error. Empty or duplicate keys throw `invalid_argument`. | Pointer-to-member keeps the struct as the single source of truth without macros. A macro couldn't carry per-field descriptions, and descriptions are what the model reads. |
+| [`detail::readField`](../include/corvus/typed_tool.h#L57) | Reads one present value into the member; integers are range-checked into the member type (`int8_t` takes only `[-128, 127]`). | Silent narrowing of model input would be a bug the tool can't see. |
+| [`inputSchema()`](../include/corvus/typed_tool.h#L185) | The JSON Schema built so far. | Handy for tests and debugging; the built tool reports the same text. |
+| [`run(fn)`](../include/corvus/typed_tool.h#L192) | Returns a `ToolPtr` built on the full-form `makeTool`. `fn` is `std::string(const T&)` (→ `Ok`) or `ToolResult(const T&, const ToolContext&)` (returned as-is). | The two forms mirror `makeTool`'s. Bad args become `RetryableError("invalid arguments: <why>")`, naming the field, so the model can fix them next turn. |
+
+**Invariants**
+- Schema entries and binders come from the same `field()` call, in declaration order.
+- `execute` never throws: arg errors are retryable results, and exceptions from `fn` are turned
+  into `FatalError` by `FunctionTool::execute`.
+- No third-party header is included (nlohmann is linked PRIVATE, so including it would not build
+  for consumers).
+
+**Sharp edges**
+- Unknown keys are ignored. *Intended* (lenient); strict rejection, if wanted, belongs to
+  `feat/arg-validation`.
+- Flat fields only (no nested structs, vectors, or enums). *Known gap*, same as `Schema`.
+- A pointer to a *base-class* member (`&Base::x` for `typedTool<Derived>`) doesn't deduce. *Intended
+  for now*; register on the base struct instead.
+
+**Tests that pin it:** `test_typed_tool.cpp` (all 10 cases), including "typedTool schema equals the
+equivalent hand-written schema" and the end-to-end agent-loop case.
+
+**If you change this file:** keep the type-mapping table in the
+[typed tools spec](specs/2026-10-06-typed-tools-design.md) and this entry in sync.
 
 ---
 
@@ -552,7 +630,7 @@ build() with a shared registry keeps anti-shadowing".
 
 ---
 
-### `include/corvus/corvus.h` · 19 lines
+### `include/corvus/corvus.h` · 21 lines
 
 The umbrella header: include it once and you have the whole user-facing API. It also defines
 `CORVUS_VERSION_MAJOR/MINOR/PATCH` (0.0.1).
@@ -569,8 +647,9 @@ The umbrella header: include it once and you have the whole user-facing API. It 
 Here is everything that happens when it runs.
 
 **Setup**
-1. `makeTool("calculator", …, schema().str("expression", …), lambda)`: `schema()` builds a `Schema`,
-   which converts to its JSON string; the simple-form `makeTool` wraps the lambda and returns a
+1. `typedTool<CalcArgs>("calculator", …).field("expression", &CalcArgs::expression, …).run(lambda)`:
+   `field()` adds a string entry to the builder's `Schema` and a binder for `CalcArgs::expression`;
+   `run()` wraps the lambda (parse → bind → call) in a full-form `makeTool` and returns a
    `FunctionTool`.
 2. `mock->callTool("calculator", "{\"expression\":\"2 + 2\"}").reply("2 + 2 = 4")`: two scripted turns.
    The tool call gets id `mock-call-0`.
@@ -675,13 +754,15 @@ Builds `mock_quickstart` when `-DCORVUS_BUILD_EXAMPLES=ON`. It runs offline.
 | `install.ps1`, `skills-lock.json` | Maintainer's local AI-assistant tooling. | No; not part of the library. |
 | `ai-agent orchestration architecture.html` | The original long-form vision document. | Background reading only; the specs supersede it. |
 
-### Test suite map (41 cases)
+### Test suite map (57 cases)
 
 | File | Cases | What it pins |
 |---|---|---|
 | `test_agent.cpp` | 16 | Loop behavior, transcript shape, builder validation and independence, MockLLM ids, async/cancel/overlap/lifetime |
 | `test_registry.cpp` | 4 | Register/find/list, duplicate rejection, `Replace`, null rejection |
 | `test_schema.cpp` | 7 | Schema JSON shape and escaping, both `makeTool` forms, never-throw |
+| `test_args.cpp` | 6 | `Args` parsing, null-as-absent, strict getters, integer rules |
+| `test_typed_tool.cpp` | 10 | Schema derivation, binding, optional/defaults, range checks, both `run` forms, build-time errors, agent loop |
 | `test_transport_contract.cpp` | 13 | Mock/real transport contract (see Part 5) |
 | `test_version.cpp` | 1 | Header version macros equal the CMake version |
 
@@ -694,7 +775,19 @@ cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-**Add a tool (lambda form)**
+**Add a tool (typed form, the usual choice)**
+```cpp
+struct WeatherArgs { std::string city; std::optional<int> days; };
+
+auto weather = corvus::typedTool<WeatherArgs>("weather", "Weather forecast for a city.")
+    .field("city", &WeatherArgs::city, "city name")
+    .field("days", &WeatherArgs::days, "forecast length in days")
+    .run([](const WeatherArgs& a) -> std::string { return a.city + ": 31°C, sunny"; });
+```
+Use the `(const T&, const corvus::ToolContext&) -> corvus::ToolResult` form of `run` to report
+retryable errors or honor cancel/deadline.
+
+**Add a tool (raw-string lambda form)**, when you want the JSON text yourself
 ```cpp
 auto weather = corvus::makeTool(
     "weather", "Current weather for a city.",
@@ -753,7 +846,7 @@ in-flight exchange, and never split an assistant tool-call turn from its tool re
 | `ToolContext::deadline` never set | [agent.cpp L141](../src/agent.cpp#L141) | Known gap → `feat/per-tool-timeout` |
 | Memory unbounded | [memory.h L30](../include/corvus/memory.h#L30) | Known gap → `feat/memory-trim-backstop` |
 | No factories for `Timeout`/`Cancelled` results | [types.h L62](../include/corvus/types.h#L62) | Known gap → `feat/per-tool-timeout` |
-| Schema is flat only | [schema.h L14](../include/corvus/schema.h#L14) | Known gap (open decision 4) |
+| Schema is flat only (so are typed tools) | [schema.h L14](../include/corvus/schema.h#L14) | Known gap (open decision 4) |
 | Tool calls in one turn run sequentially | [agent.cpp L136](../src/agent.cpp#L136) | Known gap → Phase 4 |
 | MockLLM doesn't record requests | [mock_llm.h L18](../include/corvus/mock_llm.h#L18) | Candidate improvement |
 | MockLLM empty queue returns sentinel text | [mock_llm.cpp L29](../src/mock_llm.cpp#L29) | Intended |

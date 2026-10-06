@@ -18,6 +18,8 @@ target_include_directories(doctest_header INTERFACE ${doctest_SOURCE_DIR})
 add_executable(corvus_tests
   test_main.cpp
   test_schema.cpp
+  test_args.cpp
+  test_typed_tool.cpp
   test_registry.cpp
   test_agent.cpp
   test_transport_contract.cpp

@@ -105,7 +105,7 @@ Repo: <https://github.com/Ambar-Gupta22/corvus>. `main` is the public face — *
 | # | Branch | Delivers | Depends on |
 |---|--------|----------|------------|
 | 1 | `feat/http-transport` | ✅ **merged (#1)** — mockable HTTP transport seam; adds cpp-httplib + nlohmann/json | — |
-| 1b | `feat/typed-tools` | 🚧 **in review** — `Args` + `typedTool<T>` (struct-typed tool args, schema derived) | 1 |
+| 1b | `feat/typed-tools` | ✅ **merged (#5)** — `Args` + `typedTool<T>` (struct-typed tool args, schema derived) | 1 |
 | 2 | `feat/anthropic-client` | `AnthropicClient`: native tool-calling, streaming, cancel threaded in, usage in `LLMResponse` | 1 |
 | 3 | `feat/openai-client` | `OpenAIClient`, same contract | 1 |
 | 4 | `feat/retries-backoff` | client retry/backoff branching on retryable vs fatal | 2 |
@@ -130,7 +130,7 @@ Rows 5/6 are independent — parallelize freely. Milestone when all merged: **12
 - **Post-1.0 (optional):** the "Jarvis" demo assistant (CLI → voice → phone → cloud); **`FactStore`** long-term memory (separate retrieval interface + `recall_facts`/`remember_fact` tools — embeddings never enter the core lib). Off the critical path.
 
 ## Current status
-**Phase 1 in progress.** Phase 0 complete, then hardened per [docs/specs/2026-07-06-phase0-hardening-design.md](docs/specs/2026-07-06-phase0-hardening-design.md) (message round-trip, tool contract v2, agent handle semantics, registry anti-shadowing, CMake install/export, TSan CI). Merged PRs: **#1** HTTP transport seam (Phase 1 branch 1), **#2** builder/mock fixes (independent agents per `build()`, unique MockLLM ids, version-sync test). **Next up: `feat/anthropic-client`** (branch 2). In review: **`feat/typed-tools`** (`Args` + `typedTool<T>`). Verified locally: **57 test cases / 198 assertions pass** under MSVC. Backend factories (`anthropic`/`openai`/`ollama`) are still **stubs that throw** — use `MockLLM` for now. Known gaps + their fixing PRs: [docs/CODE_TOUR.md Appendix A](docs/CODE_TOUR.md#appendix-a--sharp-edges-index). Repo: <https://github.com/Ambar-Gupta22/corvus> — work lands via feature-branch PRs (see Git workflow); `main` stays green.
+**Phase 1 in progress.** Phase 0 complete, then hardened per [docs/specs/2026-07-06-phase0-hardening-design.md](docs/specs/2026-07-06-phase0-hardening-design.md) (message round-trip, tool contract v2, agent handle semantics, registry anti-shadowing, CMake install/export, TSan CI). Merged PRs: **#1** HTTP transport seam (Phase 1 branch 1), **#2** builder/mock fixes (independent agents per `build()`, unique MockLLM ids, version-sync test), **#5** typed tools (`Args` + `typedTool<T>`). **Next up: `feat/anthropic-client`** (branch 2). Verified locally: **57 test cases / 198 assertions pass** under MSVC. Backend factories (`anthropic`/`openai`/`ollama`) are still **stubs that throw** — use `MockLLM` for now. Known gaps + their fixing PRs: [docs/CODE_TOUR.md Appendix A](docs/CODE_TOUR.md#appendix-a--sharp-edges-index). Repo: <https://github.com/Ambar-Gupta22/corvus> — work lands via feature-branch PRs (see Git workflow); `main` stays green.
 
 ## Open / parked decisions (not yet finalized)
 Consolidated so future sessions don't assume these are settled:

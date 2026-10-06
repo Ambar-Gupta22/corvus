@@ -220,7 +220,7 @@ earlier explainers moved to [history/](history/) as dated snapshots.
 
 ## Era 9 — Typed tools (October 6, 2026)
 
-**Branch:** `feat/typed-tools`. ([spec](specs/2026-10-06-typed-tools-design.md))
+**Commit:** `b02aaf9` ([PR #5](https://github.com/Ambar-Gupta22/corvus/pull/5)). ([spec](specs/2026-10-06-typed-tools-design.md))
 
 Writing a C++ tool used to mean hand-parsing a raw JSON string while keeping a separate `schema()`
 chain in sync with that parsing. Now a tool's args are a struct:

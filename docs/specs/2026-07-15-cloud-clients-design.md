@@ -1,6 +1,6 @@
 # Cloud client subsystem — design spec
 
-**Date:** 2026-07-15
+**Date:** 2026-07-15 · **Revised:** 2026-10-08 (aligned with memory design v2 — system prompt via builder, atomic exchange commits, consecutive-turn merging, prompt caching, cache-aware usage)
 **Scope:** Phase 1 branches 1–4 + 11 — `feat/http-transport`, `feat/anthropic-client`, `feat/openai-client`, `feat/retries-backoff`, `feat/usage-cost`.
 **Out of scope (separate specs):** per-tool timeout, SqliteMemory, memory trim/backstop, arg validation, Calculator, ToolGuard/HttpRequest.
 
@@ -97,8 +97,10 @@ public:
 };
 
 struct Usage {
-    int promptTokens = 0;
+    int promptTokens = 0;       // ALL input tokens, cached or not (provider-neutral)
     int completionTokens = 0;
+    int cacheReadTokens = 0;    // subset of promptTokens served from the prompt cache
+    int cacheWriteTokens = 0;   // subset of promptTokens written to the cache (Anthropic)
 };
 
 struct LLMResponse {
@@ -110,7 +112,13 @@ struct LLMResponse {
 
 Provider mapping (inside each client): 401/403 → `Auth`; 429 → `RateLimit`; 5xx and Anthropic 529 → `Server`; transport `status == 0` → `Network`. **ContextOverflow detection:** Anthropic — 400 whose message contains "prompt is too long"; OpenAI — 400 with `code == "context_length_exceeded"`. Any other 4xx → `InvalidRequest`.
 
-Agent loop change: `Kind::Cancelled` is caught and converted to a graceful `RunResult{completed = false}` — the same semantics as today's loop-top cancel check, now effective mid-request. Every other kind propagates to the caller.
+Usage normalization: Anthropic reports `input_tokens` *excluding* cache tokens plus `cache_creation_input_tokens` / `cache_read_input_tokens` — the client sums all three into `promptTokens` and fills the cache fields. OpenAI's `prompt_tokens` already includes cached tokens; `prompt_tokens_details.cached_tokens` → `cacheReadTokens`.
+
+Agent loop changes:
+
+- `Kind::Cancelled` is caught and converted to a graceful `RunResult{completed = false}` — the same semantics as today's loop-top cancel check, now effective mid-request. Every other kind propagates to the caller (`ContextOverflow` first passes through the memory backstop, branch 7).
+- **Atomic exchange commits** ([memory spec §6](2026-07-04-memory-design.md#6-atomic-exchange-commits-always-on)): because `complete()` can now throw, the loop buffers each in-flight exchange (user task on iteration 1 + assistant turn + all tool results) and commits it with one `Memory::appendAll`. A throw or cancel discards the uncommitted buffer, so a failed first call leaves memory untouched and nothing half-written is ever stored.
+- **System prompt** comes from `AgentBuilder::withSystemPrompt` and is prepended to every request as a leading `role == "system"` message; it is never stored in memory ([memory spec §4.1](2026-07-04-memory-design.md#41-the-system-prompt-is-agent-configuration-not-memory)).
 
 ```cpp
 struct RunResult {
@@ -122,7 +130,7 @@ struct RunResult {
 };
 ```
 
-`AgentBuilder::withPricing(double inPerMTok, double outPerMTok)` enables cost: `costUSD = promptTokens × inPerMTok / 1e6 + completionTokens × outPerMTok / 1e6`.
+`AgentBuilder::withPricing(double inPerMTok, double outPerMTok)` enables cost: `costUSD = promptTokens × inPerMTok / 1e6 + completionTokens × outPerMTok / 1e6`. Optional `withCachePricing(double readPerMTok, double writePerMTok)` prices the cache subsets at their own rates (the uncached remainder stays at `inPerMTok`); without it, cached tokens are billed at `inPerMTok` — a documented overestimate, never an underestimate.
 
 Deliberately omitted: a normalized `stopReason` field — no consumer yet; revisit with the memory-trim work.
 
@@ -134,6 +142,8 @@ Both clients share one internal shape: build request JSON from `(messages, tools
 
 - Headers: `x-api-key`, `anthropic-version: 2023-06-01`, `content-type: application/json`.
 - Request: a leading `role == "system"` message becomes the top-level `system` parameter. `Message.toolCalls` → assistant `tool_use` content blocks; `role == "tool"` messages → a user turn containing a `tool_result` block carrying `toolCallId`. `ToolSpec` → `tools[]` entries with `input_schema` parsed from `parametersJson`. `max_tokens` (required by the API) comes from options, default 4096.
+- **Consecutive-turn merging:** the transcript can legitimately contain adjacent user-role turns (tool results followed by the next user task, e.g. after an early stop). The client always merges adjacent same-role turns into one message's content blocks (`tool_result` blocks first, then text), so the request has one canonical, strictly alternating shape instead of relying on how the API happens to treat adjacency. This is wire-format work, so it lives in the client, not in memory.
+- **Prompt caching** (`ClientOptions.promptCaching`, default `true`): the client marks `cache_control: {"type": "ephemeral"}` on the last `tools` entry, the `system` block, and the final message of the request, so an agent loop that resends the same prefix every iteration reads it from cache. Effective because memory trims in batches ([memory spec §7](2026-07-04-memory-design.md#7-view-rules-apply-to-every-policy)) and keeps the prefix stable. OpenAI caches automatically; nothing to send.
 - Streaming events: `content_block_delta`/`text_delta` → `onToken`; `content_block_start` (tool_use) + `input_json_delta` → accumulate tool-call arguments; `message_start` + `message_delta` → usage; `error` event → mapped `LLMError`.
 
 ### OpenAIClient — `POST {base}/v1/chat/completions`
@@ -152,6 +162,7 @@ struct ClientOptions {
     std::string baseUrl;        // override for proxies / compatible endpoints
     int maxTokens = 4096;       // sent on every request; the API requires it for Anthropic
     int maxRetries = 3;         // retries after the initial attempt; 0 disables
+    bool promptCaching = true;  // Anthropic cache_control breakpoints; ignored by OpenAI
     HttpTransportPtr transport; // inject a mock in tests; null = HttplibTransport
 };
 LLMClientPtr anthropic(const std::string& model, const std::string& key = "",
@@ -181,13 +192,13 @@ All default-suite tests are offline and deterministic (repo rule). New files:
 
 - **`tests/test_sse_parser.cpp`** — events split at hostile byte boundaries (mid-line, mid-UTF-8, one byte at a time), CRLF vs LF, multi-line `data:`, `[DONE]`, ignored comments/heartbeats.
 - **`tests/test_anthropic_client.cpp` / `tests/test_openai_client.cpp`** — via `MockHttpTransport`:
-  - Request wire format: exact JSON assertions — system extraction, tool_use/tool_result round-trip (Anthropic), tool_calls/tool_call_id (OpenAI), tools schema embedding, headers/auth.
-  - Response parsing: text answer, single and parallel tool calls, usage extraction.
+  - Request wire format: exact JSON assertions — system extraction, tool_use/tool_result round-trip (Anthropic), tool_calls/tool_call_id (OpenAI), tools schema embedding, headers/auth, adjacent user-role turns merged (Anthropic), `cache_control` breakpoints present when `promptCaching` is on and absent when off.
+  - Response parsing: text answer, single and parallel tool calls, usage extraction including cache read/write normalization.
   - Streaming: scripted chunk sequences → `onToken` ordering, tool-argument assembly from deltas, usage from final events.
   - Error-mapping matrix: each (status, body) → expected `LLMError::Kind`, including both ContextOverflow detections.
   - Cancel: transport hook fires the token mid-stream → socket abort → `Kind::Cancelled`.
 - **`tests/test_retry_policy.cpp`** — sleep and RNG injected via `std::function` hooks so tests run instantly: retries on 429/5xx/network, honors `Retry-After`, never retries the non-retryable kinds, cancel during backoff exits promptly, zero-bytes-streamed rule, gives up after `maxRetries` rethrowing the last error.
-- **`tests/test_agent.cpp`** (extended) — end-to-end: real `AnthropicClient` + `MockHttpTransport` under the real `Agent` loop completes a multi-tool task offline; `RunResult.usage` summed across turns; `costUSD` math with `withPricing`; mid-run cancel yields `completed == false`.
+- **`tests/test_agent.cpp`** (extended) — end-to-end: real `AnthropicClient` + `MockHttpTransport` under the real `Agent` loop completes a multi-tool task offline; `RunResult.usage` summed across turns; `costUSD` math with `withPricing` and `withCachePricing`; mid-run cancel yields `completed == false`; atomic commits (throw on the first call → memory unchanged; throw on a later call → only complete exchanges stored; a throwing `Tool` subclass leaves no orphaned `toolCalls`); `withSystemPrompt` is sent first on every request and never appears in `memory->context()`.
 
 **Known gap (accepted):** `HttplibTransport` itself (~100 lines) has no default-suite test — it is the one unmockable piece. It is exercised by `examples/real_quickstart.cpp`, a new example that runs only when `ANTHROPIC_API_KEY` is set and is never wired into CTest.
 
@@ -198,9 +209,9 @@ CI: existing 3-OS matrix + sanitizers unchanged; FetchContent pins exact release
 | PR | Branch | Contents |
 |----|--------|----------|
 | 1 | `feat/http-transport` | transport header + `HttplibTransport` + `MockHttpTransport` + deps |
-| 2 | `feat/anthropic-client` | `LLMError`/`Usage` additions, `SseParser`, `AnthropicClient`, factory, loop Cancelled handling |
+| 2 | `feat/anthropic-client` | `LLMError`/`Usage` additions, `SseParser`, `AnthropicClient` (incl. turn merging + prompt caching), factory, loop Cancelled handling, atomic exchange commits (`Memory::appendAll`), `withSystemPrompt` |
 | 3 | `feat/openai-client` | `OpenAIClient` + factory (parallel with 4 after 2 merges the error types) |
 | 4 | `feat/retries-backoff` | `RetryPolicy` wired into both clients |
-| 5 | `feat/usage-cost` | `RunResult` usage/cost aggregation + `withPricing` |
+| 5 | `feat/usage-cost` | `RunResult` usage/cost aggregation + `withPricing` / `withCachePricing` |
 
 Each PR: green 3-OS CI, tests included, squash-merged. Milestone when all merged: quickstart against a real API.

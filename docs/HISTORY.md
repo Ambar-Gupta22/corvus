@@ -237,6 +237,31 @@ the typed form. 16 new tests (57 cases total).
 
 ---
 
+## Era 10 — Memory design v2 (October 8, 2026)
+
+**Goal.** Before any memory code is written, check the v1 memory design against what production
+agents actually hit. ([memory spec, revised in place](specs/2026-07-04-memory-design.md#revision-log))
+
+**Key decisions and why**
+- **System prompt is agent config** (`withSystemPrompt`), not a memory message. `clear()` can't
+  wipe it, policies don't special-case it, and saved sessions never carry a stale one.
+- **Atomic exchange commits.** Once real clients can throw, appending the user task before the
+  call (as the loop does today) would leave half-written exchanges, which `SqliteMemory` would
+  then save forever. The loop now buffers each exchange and commits it with one `appendAll`.
+  Lands in `feat/anthropic-client`, the PR where `complete()` starts throwing.
+- **Store vs view.** The store keeps; a pure view policy decides what's sent. The backstop shapes
+  the outgoing request and never edits the store.
+- **Batched, cache-friendly trimming.** A one-message sliding window changes the request prefix
+  every call and defeats provider prompt caching. Policies cut in jumps (high/low watermarks),
+  and the Anthropic client places `cache_control` breakpoints. `Usage` gains cache token fields.
+- **Production persistence.** `SqliteMemory` gets sessions, a versioned schema, JSON rows, and
+  load-time repair: each of these is a breaking schema change if added later.
+- **Observable trims** (`onContextTrim`, `RunResult` counters), a transcript sanitizer, and a
+  backstop that learns a size cap and ends in the typed `ContextOverflow` error (matching the
+  cloud error contract).
+
+---
+
 ## What's next
 
 The remaining Phase 1 branches (Anthropic and OpenAI clients, retries, per-tool timeout, SQLite

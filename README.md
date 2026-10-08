@@ -213,7 +213,7 @@ Full detail: [design spec](docs/specs/2026-06-29-jarvis-cpp-design.md) · what's
 | [History](docs/HISTORY.md) | How the code got here, era by era, with commits |
 | [Design & roadmap spec](docs/specs/2026-06-29-jarvis-cpp-design.md) | Original architecture, decisions, phases |
 | [Cloud clients design](docs/specs/2026-07-15-cloud-clients-design.md) | Phase 1 client subsystem |
-| [Memory design](docs/specs/2026-07-04-memory-design.md) | Trimming policies, overflow backstop, phasing |
+| [Memory design](docs/specs/2026-07-04-memory-design.md) | Memory v2: cache-friendly trimming, atomic commits, overflow backstop, SQLite persistence, phasing |
 
 ## Contributing
 

@@ -239,6 +239,8 @@ the typed form. 16 new tests (57 cases total).
 
 ## Era 10 — Memory design v2 (October 8, 2026)
 
+**Commit:** `200f2e3` ([PR #6](https://github.com/Ambar-Gupta22/corvus/pull/6)). Docs only.
+
 **Goal.** Before any memory code is written, check the v1 memory design against what production
 agents actually hit. ([memory spec, revised in place](specs/2026-07-04-memory-design.md#revision-log))
 

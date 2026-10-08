@@ -170,8 +170,11 @@ One line each here:
 
 **Settled**
 - Tool contract: `execute(args, ctx) -> ToolResult` (hardening spec A2).
-- Memory: unbounded by default; bounding comes from opt-in policies behind the same `Memory` seam
-  ([memory spec](specs/2026-07-04-memory-design.md)).
+- Memory: unbounded by default; bounding comes from opt-in *view* policies (the store keeps, the
+  policy decides what's sent) that trim in batches so provider prompt caching keeps working. The
+  system prompt is agent config, not memory. Memory only ever receives complete exchanges, and an
+  always-on backstop handles context overflow on the outgoing request
+  ([memory spec v2](specs/2026-07-04-memory-design.md)).
 - HTTP seam cut at raw bytes, not provider events
   ([cloud clients spec](specs/2026-07-15-cloud-clients-design.md)).
 - Built-in tools ship by risk: Calculator + guarded HttpRequest (P1), jailed file I/O (P2), guarded
@@ -195,7 +198,8 @@ Every future phase extends an existing seam instead of reshaping the core:
 |---|---|---|
 | 1 — cloud backends | `AnthropicClient`, `OpenAIClient`, retries, usage/cost | `LLMClient` (implementations) on top of `HttpTransport` |
 | 1 | Per-tool timeout | `ToolContext::deadline` (already in the type, unset today) + a loop watchdog |
-| 1 | `SqliteMemory`, `lastN` trimming, overflow backstop | `Memory` |
+| 1 | Atomic exchange commits (`Memory::appendAll`), `withSystemPrompt` | `Memory` (one additive method), `AgentBuilder` |
+| 1 | `SqliteMemory` (sessions, versioned schema), `lastN` view policy, sanitizer, overflow backstop, `onContextTrim` | `Memory` + a view policy applied by the loop; `AgentCallbacks` |
 | 1 | Calculator, guarded HttpRequest, `ToolGuard`, arg validation | `Tool` / `ToolRegistry` |
 | 2 — local-first | Ollama, llama.cpp + GBNF, token-budget memory, jailed file tools | `LLMClient`, `Memory`, `Tool` |
 | 3 — MCP-native | `McpClient`; MCP tools registered as `<server>__<tool>` | `Tool` / `ToolRegistry` (and anti-shadowing matters here) |

@@ -27,10 +27,11 @@
 1. **`include/corvus/llm_client.h` additions** — `LLMError` (kind, httpStatus, message), `Usage`, `LLMResponse.usage`, `ClientOptions`, new factory overloads. Keep existing signatures intact.
 2. **`src/sse_parser.h/.cpp`** (internal) — stateful feeder: buffer bytes → emit `(event, data)` pairs; blank-line event split, CRLF/LF, multi-line `data:`, comment/heartbeat skip.
 3. **Tests first for the parser: `tests/test_sse_parser.cpp`** — hostile chunk boundaries (1-byte feeds, mid-UTF-8), CRLF, multi-line data, `[DONE]` passthrough.
-4. **`src/anthropic_client.cpp`** — request build (system extraction, tool_use/tool_result mapping, tools with `input_schema`, `max_tokens`), non-stream parse, streaming via SseParser (text deltas → onToken, input_json_delta accumulation, usage from message_start/message_delta, error events), error mapping incl. "prompt is too long" → `ContextOverflow`. Wire `anthropic()` factory: env-key fallback, default `HttplibTransport`, `ClientOptions.transport` injection. Remove the Anthropic stub from `src/clients_stub.cpp`.
+4. **`src/anthropic_client.cpp`** — request build (system extraction, tool_use/tool_result mapping, adjacent same-role turns merged into one message, tools with `input_schema`, `max_tokens`, `cache_control` breakpoints on tools/system/final message when `ClientOptions.promptCaching`), usage normalization (input + cache creation + cache read → `promptTokens`, cache fields filled), non-stream parse, streaming via SseParser (text deltas → onToken, input_json_delta accumulation, usage from message_start/message_delta, error events), error mapping incl. "prompt is too long" → `ContextOverflow`. Wire `anthropic()` factory: env-key fallback, default `HttplibTransport`, `ClientOptions.transport` injection. Remove the Anthropic stub from `src/clients_stub.cpp`.
 5. **Agent loop** (`src/agent.cpp`) — catch `LLMError` with `kind()==Cancelled` → `RunResult{completed=false}`; everything else propagates.
-6. **Tests: `tests/test_anthropic_client.cpp`** — wire-format exact-JSON assertions, response/streaming parsing, error matrix, cancel mid-stream, usage extraction (per spec test list). Extend `tests/test_agent.cpp`: AnthropicClient + MockHttpTransport end-to-end multi-tool run offline; mid-run cancel.
-7. **Docs:** CLAUDE.md status line (anthropic stub → real); quickstart docs still Mock-based until PR 5.
+6. **Memory integrity** ([memory spec §4.1, §6](../specs/2026-07-04-memory-design.md#6-atomic-exchange-commits-always-on)) — `Memory::appendAll` (new virtual, default loops `append`; `InMemoryMemory` overrides under one lock). The loop buffers each in-flight exchange and commits it once complete; a throw/cancel discards the buffer. `AgentBuilder::withSystemPrompt` → stored on `Agent::State`, prepended to every request, never appended to memory.
+7. **Tests: `tests/test_anthropic_client.cpp`** — wire-format exact-JSON assertions (incl. turn merging, cache breakpoints on/off), response/streaming parsing, error matrix, cancel mid-stream, usage extraction incl. cache normalization (per spec test list). Extend `tests/test_agent.cpp`: AnthropicClient + MockHttpTransport end-to-end multi-tool run offline; mid-run cancel; atomic-commit cases (throw on first call, throw on later call, throwing `Tool` subclass); system prompt sent first, never stored. New `tests/test_memory.cpp`: `appendAll` default implementation and `InMemoryMemory` override.
+8. **Docs:** CLAUDE.md status line (anthropic stub → real); CODE_TOUR entries for `memory.h` (`appendAll`), `agent_builder.h` (`withSystemPrompt`), `llm_client.h` (`Usage` cache fields, `ClientOptions.promptCaching`); quickstart docs still Mock-based until PR 5.
 
 **Acceptance:** offline end-to-end agent run through real client code; error matrix green; loop cancel semantics preserved.
 
@@ -38,7 +39,7 @@
 
 ## PR 3 — `feat/openai-client` (after PR 2; parallel with PR 4)
 
-1. **`src/openai_client.cpp`** — Chat Completions request build (1:1 roles, tool_calls/tool_call_id), non-stream parse, streaming (delta.content, index-assembled delta.tool_calls, `stream_options.include_usage`, `[DONE]`), error mapping incl. `context_length_exceeded` → `ContextOverflow`. Factory + env fallback + `baseUrl` override. Remove OpenAI stub.
+1. **`src/openai_client.cpp`** — Chat Completions request build (1:1 roles, tool_calls/tool_call_id), non-stream parse, usage incl. `prompt_tokens_details.cached_tokens` → `cacheReadTokens`, streaming (delta.content, index-assembled delta.tool_calls, `stream_options.include_usage`, `[DONE]`), error mapping incl. `context_length_exceeded` → `ContextOverflow`. Factory + env fallback + `baseUrl` override. Remove OpenAI stub.
 2. **Tests: `tests/test_openai_client.cpp`** — same categories as Anthropic tests.
 3. **Docs:** note `baseUrl` → Ollama/OpenRouter compatibility.
 
@@ -58,9 +59,9 @@
 
 ## PR 5 — `feat/usage-cost`
 
-1. **`include/corvus/agent.h`** — `RunResult.usage`, `RunResult.costUSD`. **`agent_builder.h/.cpp`** — `withPricing(inPerMTok, outPerMTok)`; plumb pricing into `Agent::State`.
-2. **`src/agent.cpp`** — sum `LLMResponse.usage` per `complete()` call into the run's `RunResult`; compute cost when pricing set.
-3. **Tests:** extend `tests/test_agent.cpp` — multi-turn usage summation, cost math, zero-cost default. MockLLM gains optional per-reply usage so this stays offline.
+1. **`include/corvus/agent.h`** — `RunResult.usage`, `RunResult.costUSD`. **`agent_builder.h/.cpp`** — `withPricing(inPerMTok, outPerMTok)` + optional `withCachePricing(readPerMTok, writePerMTok)`; plumb pricing into `Agent::State`.
+2. **`src/agent.cpp`** — sum `LLMResponse.usage` (all four fields) per `complete()` call into the run's `RunResult`; compute cost when pricing set (cache subsets at cache rates when configured, else at the input rate).
+3. **Tests:** extend `tests/test_agent.cpp` — multi-turn usage summation, cost math with and without cache pricing, zero-cost default. MockLLM gains optional per-reply usage so this stays offline.
 4. **`examples/real_quickstart.cpp`** — 12-line quickstart against real Anthropic API; built with examples, runs only when `ANTHROPIC_API_KEY` set; never in CTest.
 5. **Docs sweep:** CLAUDE.md status → "Phase 1 cloud client subsystem merged"; README quickstart shows the real-API snippet; design spec status notes.
 
@@ -71,7 +72,7 @@
 ## Cross-cutting rules
 
 - **TDD bias:** wire-format and parser tests written against the spec before/with the implementation; error matrix is the contract.
-- **No public-header churn beyond spec:** additions only (`LLMError`, `Usage`, `ClientOptions`, `RunResult` fields, `withPricing`). Existing user code keeps compiling.
+- **No public-header churn beyond spec:** additions only (`LLMError`, `Usage`, `ClientOptions`, `RunResult` fields, `withPricing`/`withCachePricing`, `withSystemPrompt`, `Memory::appendAll` with a default implementation). Existing user code keeps compiling.
 - **Windows first-class:** MSVC + OpenSSL path validated in CI from PR 1 — do not defer TLS-on-Windows pain to PR 5.
 - **Each PR leaves `main` releasable:** stubs remain for not-yet-implemented backends (ollama throws until Phase 2).
 

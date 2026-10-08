@@ -24,18 +24,19 @@ Start here. Pick the reading path that matches why you're here.
 
 | Doc | Purpose | Status | Last updated |
 |---|---|---|---|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Big picture, patterns, invariants, decisions | Current | 2026-09-29 |
-| [CODE_TOUR.md](CODE_TOUR.md) | File-by-file, function-by-function walkthrough | Current | 2026-09-29 |
-| [HISTORY.md](HISTORY.md) | Eras, decisions, and commits, step by step | Current | 2026-09-29 |
-| [specs/2026-06-29-jarvis-cpp-design.md](specs/2026-06-29-jarvis-cpp-design.md) | Original strategy, architecture, roadmap | Current (decision record) | 2026-07-14 |
-| [specs/2026-07-04-memory-design.md](specs/2026-07-04-memory-design.md) | Memory policies, overflow backstop | Current (decision record) | 2026-07-14 |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Big picture, patterns, invariants, decisions | Current | 2026-10-08 |
+| [CODE_TOUR.md](CODE_TOUR.md) | File-by-file, function-by-function walkthrough | Current | 2026-10-08 |
+| [HISTORY.md](HISTORY.md) | Eras, decisions, and commits, step by step | Current | 2026-10-08 |
+| [specs/2026-06-29-jarvis-cpp-design.md](specs/2026-06-29-jarvis-cpp-design.md) | Original strategy, architecture, roadmap | Current (decision record) | 2026-10-08 |
+| [specs/2026-07-04-memory-design.md](specs/2026-07-04-memory-design.md) | Memory v2: view policies, atomic commits, cache-friendly trimming, backstop, SQLite persistence | Current (decision record, v2) | 2026-10-08 |
 | [specs/2026-07-06-phase0-hardening-design.md](specs/2026-07-06-phase0-hardening-design.md) | Phase 0 API hardening | Implemented | 2026-07-06 |
-| [specs/2026-07-15-cloud-clients-design.md](specs/2026-07-15-cloud-clients-design.md) | Phase 1 transport, clients, errors, retries | Current (PR 1 of 5 done) | 2026-07-15 |
-| [plans/2026-07-15-cloud-clients-plan.md](plans/2026-07-15-cloud-clients-plan.md) | Phase 1 cloud clients, split into 5 PRs | Current | 2026-07-15 |
+| [specs/2026-07-15-cloud-clients-design.md](specs/2026-07-15-cloud-clients-design.md) | Phase 1 transport, clients, errors, retries | Current (PR 1 of 5 done) | 2026-10-08 |
+| [plans/2026-07-15-cloud-clients-plan.md](plans/2026-07-15-cloud-clients-plan.md) | Phase 1 cloud clients, split into 5 PRs | Current | 2026-10-08 |
 | [specs/2026-09-29-onboarding-docs-design.md](specs/2026-09-29-onboarding-docs-design.md) | Design of this documentation set | Implemented | 2026-09-29 |
 | [history/phase-0-explained.md](history/phase-0-explained.md) | Plain-language Phase 0 walkthrough | Historical snapshot | 2026-07-14 |
 | [history/pr1-http-transport-explained.md](history/pr1-http-transport-explained.md) | Plain-language PR #1 walkthrough | Historical snapshot | 2026-07-15 |
 
 **Specs vs guides.** Specs and plans are the *decision record*: what was decided, and why, at the
-time. They aren't rewritten when the code moves on. The three guides above describe the code *as it
+time. They aren't rewritten when the code moves on; a deliberate redesign before implementation is
+marked with a `Revised:` date and a revision log (e.g. the memory spec v2). The three guides above describe the code *as it
 is now*, and are kept up to date with every PR (see the PR checklist in CODE_TOUR Part 8).

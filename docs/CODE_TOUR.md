@@ -319,8 +319,14 @@ conversation, and `Memory` is what holds it between calls.
 
 **Sharp edges**
 - Unbounded: a long conversation eventually exceeds the model's context window. *Known gap →
-  `feat/memory-trim-backstop`* (the `lastN` policy + the always-on overflow backstop; see the
-  [memory spec](specs/2026-07-04-memory-design.md)).
+  `feat/memory-trim-backstop`* (the batched `lastN` view policy, the transcript sanitizer, and the
+  always-on overflow backstop; see the [memory spec](specs/2026-07-04-memory-design.md)).
+- Not atomic per exchange: the loop appends the user task before calling the model and each tool
+  result as it arrives. Harmless while `complete()` can't throw (Phase 0), but once real clients
+  can fail mid-run it would leave an unanswered task or orphaned `toolCalls` behind. *Known gap →
+  `feat/anthropic-client`* (buffer the exchange, commit via a new `Memory::appendAll`; memory spec §6).
+- No system prompt yet. When it arrives it is **agent configuration** (`withSystemPrompt`),
+  prepended to each request and never stored here (memory spec §4.1).
 - `context()` copies the whole history on every loop iteration (O(history) per turn). *Intended*,
   and cheap next to a network round-trip; revisit only if profiling says so.
 - Memory is **per agent, and persists across runs**: a second `run()` on the same agent sees the
@@ -824,9 +830,12 @@ Add the file to `tests/CMakeLists.txt` if it's new.
 stream. Test it entirely with `MockHttpTransport`, asserting on `requests()`. The full contract is
 in the [cloud clients spec](specs/2026-07-15-cloud-clients-design.md).
 
-**Add a `Memory` policy.** Implement `append` / `context` / `clear`, applying the trimming rules
-from the [memory spec](specs/2026-07-04-memory-design.md) §4: keep the system message, keep the
-in-flight exchange, and never split an assistant tool-call turn from its tool results.
+**Add a `Memory` store or policy.** A *store* implements `append` / `context` / `clear` (and, once
+it exists, overrides `appendAll` to write a whole exchange atomically). A *view policy* is a pure
+function over the stored history, applying the rules in the
+[memory spec](specs/2026-07-04-memory-design.md) §7: keep pinned messages and the in-flight
+exchange, never split an assistant tool-call turn from its tool results, and cut in batches (not
+one message at a time) so the request prefix stays cacheable.
 
 **PR checklist**
 - Branch `feat/…`, `fix/…`, `docs/…`, or `ci/…` from `main`; one coherent change per PR.
@@ -845,6 +854,8 @@ in-flight exchange, and never split an assistant tool-call turn from its tool re
 | Retryable treated as fatal | [agent.cpp L31](../src/agent.cpp#L31) | Known gap → `feat/retries-backoff` |
 | `ToolContext::deadline` never set | [agent.cpp L141](../src/agent.cpp#L141) | Known gap → `feat/per-tool-timeout` |
 | Memory unbounded | [memory.h L30](../include/corvus/memory.h#L30) | Known gap → `feat/memory-trim-backstop` |
+| Memory writes not atomic per exchange | [agent.cpp L93](../src/agent.cpp#L93), [L131](../src/agent.cpp#L131) | Known gap → `feat/anthropic-client` |
+| No system prompt | [agent_builder.h](../include/corvus/agent_builder.h) | Known gap → `feat/anthropic-client` |
 | No factories for `Timeout`/`Cancelled` results | [types.h L62](../include/corvus/types.h#L62) | Known gap → `feat/per-tool-timeout` |
 | Schema is flat only (so are typed tools) | [schema.h L14](../include/corvus/schema.h#L14) | Known gap (open decision 4) |
 | Tool calls in one turn run sequentially | [agent.cpp L136](../src/agent.cpp#L136) | Known gap → Phase 4 |

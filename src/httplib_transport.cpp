@@ -6,6 +6,7 @@
 #include <httplib.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <string>
 
@@ -25,12 +26,65 @@ struct SplitUrl {
     bool ok = false;
 };
 
-bool hasCtl(const std::string& s) {
-    return s.find('\r') != std::string::npos || s.find('\n') != std::string::npos;
+bool isCtl(unsigned char c) { return c < 0x20 || c == 0x7f; }
+
+// RFC 9110 token: what a header name may contain. Rules out CR/LF, NUL,
+// spaces and ':' (which would split the name into a forged value).
+bool isHeaderName(const std::string& s) {
+    if (s.empty()) return false;
+    for (const unsigned char c : s) {
+        if (std::isalnum(c) != 0) continue;
+        if (std::string("!#$%&'*+-.^_`|~").find(static_cast<char>(c)) == std::string::npos) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Header values may contain HTAB but no other control character: CR/LF would
+// inject headers, and httplib skips its own check on the multimap path we use.
+bool isHeaderValue(const std::string& s) {
+    for (const unsigned char c : s) {
+        if (isCtl(c) && c != '\t') return false;
+    }
+    return true;
+}
+
+// The URL as it may appear in an error message: control bytes escaped (no
+// log injection), userinfo and query/fragment redacted (they can carry
+// credentials, e.g. "?key=...").
+std::string redactUrl(const std::string& url) {
+    std::string cut = url.substr(0, url.find_first_of("?#"));
+    const bool hadQuery = cut.size() != url.size();
+    const auto schemeEnd = cut.find("://");
+    const std::size_t authStart = schemeEnd == std::string::npos ? 0 : schemeEnd + 3;
+    const auto authEnd = cut.find('/', authStart);
+    const auto at = cut.rfind('@', authEnd == std::string::npos ? std::string::npos : authEnd);
+    if (at != std::string::npos && at >= authStart) {
+        cut.replace(authStart, at - authStart, "<redacted>");
+    }
+    std::string out;
+    for (const unsigned char c : cut) {
+        if (isCtl(c)) {
+            static const char* hex = "0123456789ABCDEF";
+            out += "\\x";
+            out += hex[c >> 4];
+            out += hex[c & 0xf];
+        } else {
+            out += static_cast<char>(c);
+        }
+    }
+    if (hadQuery) out += "?<redacted>";
+    return out;
 }
 
 SplitUrl splitUrl(const std::string& url) {
     SplitUrl out;
+    // No control bytes or spaces anywhere: they are never valid in a URL, and
+    // httplib's path encoder stops at the first NUL, silently truncating.
+    for (const unsigned char c : url) {
+        if (isCtl(c) || c == ' ') return out;
+    }
     std::string rest;
     if (url.rfind("https://", 0) == 0) {
         out.https = true;
@@ -44,11 +98,8 @@ SplitUrl splitUrl(const std::string& url) {
     const std::string hostport = slash == std::string::npos ? rest : rest.substr(0, slash);
     if (hostport.empty()) return out;
     // Reject userinfo (user@host — would connect somewhere other than the
-    // apparent host) and any whitespace/control char in the authority.
+    // apparent host).
     if (hostport.find('@') != std::string::npos) return out;
-    for (const unsigned char c : hostport) {
-        if (c <= ' ') return out;
-    }
     out.path = slash == std::string::npos ? "/" : rest.substr(slash);
     out.base = (out.https ? "https://" : "http://") + hostport;
     out.ok = true;
@@ -75,7 +126,7 @@ public:
 
         const SplitUrl u = splitUrl(req.url);
         if (!u.ok) {
-            out.error = "invalid url: " + req.url;
+            out.error = "invalid url: " + redactUrl(req.url);
             return out;
         }
 #ifndef CORVUS_HAS_TLS
@@ -86,6 +137,31 @@ public:
             return out;
         }
 #endif
+
+        httplib::Headers headers;
+        std::string contentType = "application/json";
+        for (const auto& h : req.headers) {
+            // httplib validates only in Request::set_header, which the
+            // multimap path below bypasses, so an unchecked name or value
+            // could inject headers or smuggle a request. The error never
+            // echoes the offending bytes (the value may be a secret).
+            if (!isHeaderName(h.first)) {
+                out.error = "invalid header name";
+                return out;
+            }
+            if (!isHeaderValue(h.second)) {
+                out.error = "invalid header value (control character): " + h.first;
+                return out;
+            }
+            if (iequals(h.first, "content-type")) {
+                contentType = h.second;
+            } else {
+                headers.emplace(h.first, h.second);
+            }
+        }
+
+        // Pre-flight cancel comes after input validation, so a malformed
+        // request is reported as such whatever the token's state.
         if (cancel.cancelled()) {
             out.error = "cancelled";
             return out;
@@ -96,23 +172,6 @@ public:
         cli.set_read_timeout(req.readTimeout);
         cli.set_write_timeout(req.readTimeout);
         cli.set_follow_location(false);
-
-        httplib::Headers headers;
-        std::string contentType = "application/json";
-        for (const auto& h : req.headers) {
-            // Reject CR/LF in either name or value: httplib validates CRLF only
-            // in Request::set_header, which the multimap path below bypasses,
-            // so an unchecked value could inject headers or smuggle a request.
-            if (hasCtl(h.first) || hasCtl(h.second)) {
-                out.error = "invalid header (contains CR/LF): " + h.first;
-                return out;
-            }
-            if (iequals(h.first, "content-type")) {
-                contentType = h.second;
-            } else {
-                headers.emplace(h.first, h.second);
-            }
-        }
 
         int status = 0;
         bool cancelled = false;
@@ -132,8 +191,8 @@ public:
             status = r.status;
             return true;
         };
-        hreq.content_receiver = [&](const char* data, std::size_t len, std::uint64_t,
-                                    std::uint64_t) -> bool {
+        hreq.content_receiver = [&](const char* data, std::size_t len, std::size_t,
+                                    std::size_t) -> bool {
             if (cancel.cancelled()) {
                 cancelled = true;
                 return false;  // closes the socket — cancel is honored mid-transfer

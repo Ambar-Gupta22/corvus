@@ -264,6 +264,39 @@ agents actually hit. ([memory spec, revised in place](specs/2026-07-04-memory-de
 
 ---
 
+## Era 11 — Transport and supply-chain hardening (November 19, 2026)
+
+**Branch:** `fix/transport-hardening`. Commit linked on merge.
+
+**Goal.** A security review before the first real client found gaps that would turn into real
+vulnerabilities once model-influenced values and API keys reach the transport. Close the cheap,
+independent ones now, before any client code builds on them.
+
+**What changed and why**
+1. **cpp-httplib v0.18.3 → v0.65.0.** v0.18.3 was inside the affected range of several published
+   GitHub advisories, including client-side ones: a crash on a malformed `Content-Length` from a
+   hostile server (CVE-2026-31870) and CRLF header injection (CVE-2026-21428). Every advisory
+   published so far is fixed by v0.51.0. TLS verification and no-redirect defaults were re-checked
+   in the new source.
+2. **Pinned by SHA-256, not git tag** (cpp-httplib, nlohmann/json, doctest). A tag can be moved to
+   different code; an archive hash can't.
+3. **Stricter input guards.** Control bytes and spaces are rejected anywhere in the URL, not just
+   the authority: httplib's path encoder stops at the first NUL. Header names must be RFC 9110
+   tokens, and header values may contain no control byte but HTAB (was CR/LF only).
+4. **Errors no longer leak or inject.** `invalid url:` errors redact userinfo and query, and escape
+   control bytes. Header errors never echo the value, which is often a secret.
+5. **Validation before pre-flight cancel**, so malformed input is always reported as malformed.
+6. **CI least privilege:** `permissions: contents: read`, actions pinned by commit SHA, and
+   Dependabot to keep the pins current.
+7. **`SECURITY.md`**, moved up from Phase 5: private reporting via GitHub advisories, response
+   targets, scope.
+
+6 new tests (63 cases total). Deferred on purpose: loop caps and a tool-call veto (public API, own
+PR `feat/loop-guards`), and cleartext-auth refusal, total deadline and streaming caps (they land
+with the first client, where keys and streaming arrive).
+
+---
+
 ## What's next
 
 The remaining Phase 1 branches (Anthropic and OpenAI clients, retries, per-tool timeout, SQLite

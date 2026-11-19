@@ -6,9 +6,9 @@ include(FetchContent)
 # cmake_minimum_required < 3.5, which CMake 4+ refuses to process.)
 FetchContent_Declare(
   doctest
-  GIT_REPOSITORY https://github.com/doctest/doctest.git
-  GIT_TAG        v2.4.11
-  SOURCE_SUBDIR  do-not-configure
+  URL           https://github.com/doctest/doctest/archive/refs/tags/v2.4.11.tar.gz
+  URL_HASH      SHA256=632ed2c05a7f53fa961381497bf8069093f0d6628c5f26286161fbd32a560186
+  SOURCE_SUBDIR do-not-configure
 )
 FetchContent_MakeAvailable(doctest)
 

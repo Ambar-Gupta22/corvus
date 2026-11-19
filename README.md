@@ -147,7 +147,7 @@ flowchart LR
 - **No silent tool hijacking.** Registering a second tool under an existing name is an error unless you explicitly choose to replace it.
 - **One run at a time per agent,** enforced. Build a second agent for concurrent work.
 - **Public headers are a contract.** Standard types only; third-party libraries are linked privately and never leak into your build.
-- **Security is designed in, not bolted on.** The HTTP transport rejects header injection and `user@host` URL tricks, caps response sizes, and never follows redirects. Every dangerous built-in tool will ship with a `ToolGuard` (path jail, private-IP block, output caps), because raw outbound HTTP from an LLM is an SSRF risk.
+- **Security is designed in, not bolted on.** The HTTP transport rejects header injection and `user@host` URL tricks, caps response sizes, and never follows redirects. Every dangerous built-in tool will ship with a `ToolGuard` (path jail, private-IP block, output caps), because raw outbound HTTP from an LLM is an SSRF risk. Dependencies are pinned by hash. Found a vulnerability? See [SECURITY.md](SECURITY.md).
 
 For the full picture, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 

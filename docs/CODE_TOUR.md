@@ -418,29 +418,35 @@ sockets make CI flaky).
 Why the non-2xx case skips `onChunk`: the client's streaming parser expects SSE events, and a JSON
 error body would confuse it. The client parses `body` instead.
 
-### `src/httplib_transport.cpp` · 189 lines
+### `src/httplib_transport.cpp` · 248 lines
 
 All cpp-httplib code lives in this one file, in an anonymous namespace.
 
 | Symbol | What | Why |
 |---|---|---|
-| [`kErrorBodyCap` / `kMaxBodyBytes`](../src/httplib_transport.cpp#L18) | 256 KB / 64 MB. | Bound memory. A hostile server declaring a huge body could otherwise cause `bad_alloc`, i.e. an exception escaping a never-throw function (found in PR #1 review). |
-| [`splitUrl`](../src/httplib_transport.cpp#L32) | Splits into base + path. Accepts only `http://`/`https://`; rejects `@` and control/space characters in the authority. | **Userinfo attack:** `https://api.anthropic.com@evil.example/` actually connects to `evil.example`, and would send the API key there under a valid TLS certificate for the attacker's host. |
-| [`hasCtl`](../src/httplib_transport.cpp#L28) | True if a string contains CR or LF. | **Header injection:** a `\r\n` in a header value would write extra headers, or a second request, onto the wire. httplib only checks this on a code path we don't use. Not exploitable today, but the Phase 1 HttpRequest *tool* will let model-influenced values reach here. |
-| [`iequals`](../src/httplib_transport.cpp#L58) | Case-insensitive compare. | Header names are case-insensitive; used to detect a caller's `Content-Type`. |
-| [`HttplibTransport::post`](../src/httplib_transport.cpp#L72) | The real request. | Steps below. |
-| [`defaultHttpTransport()`](../src/httplib_transport.cpp#L187) | `make_shared<HttplibTransport>()`. | |
+| [`kErrorBodyCap` / `kMaxBodyBytes`](../src/httplib_transport.cpp#L19) | 256 KB / 64 MB. | Bound memory. A hostile server declaring a huge body could otherwise cause `bad_alloc`, i.e. an exception escaping a never-throw function (found in PR #1 review). |
+| [`isCtl`](../src/httplib_transport.cpp#L29) | True for bytes below 0x20 and for 0x7F. | One definition of "control byte" for every guard below. |
+| [`isHeaderName`](../src/httplib_transport.cpp#L33) | Header name must be a non-empty RFC 9110 token. | Rules out CR/LF, NUL, spaces and `:`. A `:` in a name would split it into a forged name/value pair. |
+| [`isHeaderValue`](../src/httplib_transport.cpp#L46) | Header value may contain HTAB but no other control byte. | **Header injection:** a `\r\n` in a value would write extra headers, or a second request, onto the wire. httplib only checks this on a code path we don't use. Not exploitable today, but the Phase 1 HttpRequest *tool* will let model-influenced values reach here. Was CR/LF-only until `fix/transport-hardening`. |
+| [`redactUrl`](../src/httplib_transport.cpp#L56) | The URL as it appears in an `invalid url:` error: control bytes escaped as `\xHH`, userinfo replaced by `<redacted>`, query and fragment replaced by `?<redacted>`. | Error text ends up in logs. Raw bytes would allow log injection, and userinfo or `?key=…` can carry credentials. |
+| [`splitUrl`](../src/httplib_transport.cpp#L81) | Splits into base + path. Accepts only `http://`/`https://`; rejects control bytes and spaces **anywhere** in the URL, and `@` in the authority. | **Userinfo attack:** `https://api.anthropic.com@evil.example/` actually connects to `evil.example`, and would send the API key there under a valid TLS certificate for the attacker's host. **Whole-URL check:** httplib's path encoder stops at the first NUL, silently truncating the path, so rejecting is safer than relying on its encoding. |
+| [`iequals`](../src/httplib_transport.cpp#L109) | Case-insensitive compare. | Header names are case-insensitive; used to detect a caller's `Content-Type`. |
+| [`HttplibTransport::post`](../src/httplib_transport.cpp#L123) | The real request. | Steps below. |
+| [`defaultHttpTransport()`](../src/httplib_transport.cpp#L246) | `make_shared<HttplibTransport>()`. | |
 
 **`post` step by step**
 
-1. Validate the URL (`splitUrl`). If it's bad: `error = "invalid url: …"`, status 0.
+1. Validate the URL (`splitUrl`). If it's bad: `error = "invalid url: <redacted URL>"`, status 0.
 2. If the URL is `https` but corvus was built without OpenSSL, fail with a clear message instead of
    an opaque socket error.
-3. **Pre-flight cancel:** if the token has already fired, return `"cancelled"` without connecting.
-4. Configure the client: timeouts, and `set_follow_location(false)` (**no redirects**, so a
+3. Validate and copy headers. A bad name fails with `"invalid header name"`; a bad value with
+   `"invalid header value (control character): <name>"`. The error never echoes the offending
+   bytes, since a header value is often a secret. `Content-Type` defaults to `application/json`
+   and can be overridden.
+4. **Pre-flight cancel:** if the token has already fired, return `"cancelled"` without connecting.
+   This comes *after* validation, so malformed input is always reported as such.
+5. Configure the client: timeouts, and `set_follow_location(false)` (**no redirects**, so a
    key-bearing request can't be bounced to another host).
-5. Copy headers, rejecting any with CR/LF; `Content-Type` defaults to `application/json` and can be
-   overridden.
 6. The `response_handler` records the status **before** any body byte arrives, which is what lets
    the next step route bytes by status.
 7. The `content_receiver` gets each buffer:
@@ -452,8 +458,9 @@ All cpp-httplib code lives in this one file, in an anonymous namespace.
    overflow > httplib's own error text. Status stays 0.
 9. On success, copy the status and headers, and move `bodyBuf` into `body`.
 
-Certificate and hostname verification are on by default in the pinned cpp-httplib (v0.18.3); this
-was checked against the library source during review.
+Certificate and hostname verification are on by default in the pinned cpp-httplib (v0.65.0), and
+redirects are off by default too; both were re-checked against the library source when it was
+bumped from v0.18.3. httplib ≥ 0.51 requires OpenSSL ≥ 3.0 for TLS.
 
 ### `include/corvus/mock_http_transport.h` · 115 lines
 
@@ -480,13 +487,20 @@ Concretely, the mock mirrors:
 
 **Sharp edge:** not thread-safe. Drive it from the test thread. *Intended.*
 
-### `tests/test_transport_contract.cpp` · 227 lines, 13 cases
+### `tests/test_transport_contract.cpp` · 311 lines, 19 cases
 
 Pins both transports to one contract. Mock tests cover FIFO order, request recording, an empty queue
 (an error, not a throw), streaming order, collapse-to-body, non-2xx handling, receiver abort, and
 pre-flight and mid-stream cancel. Real-transport tests exercise only the guards that fail **before
-connecting** (malformed URL, userinfo, CR/LF header, pre-cancelled token), so the suite still never
-touches the network.
+connecting**, so the suite still never touches the network:
+- malformed URL, userinfo, and control bytes or spaces anywhere in the URL;
+- error redaction (escaped control bytes, redacted userinfo and query);
+- header names that aren't tokens, and control bytes in header values (never echoed);
+- a tab in a value being accepted;
+- validation winning over a pre-cancelled token, and the pre-cancelled token itself.
+
+The "tab is accepted" test uses a pre-cancelled token: reaching `"cancelled"` proves the header
+passed validation without opening a socket.
 
 **Sharp edge:** neither transport header is included by `corvus.h`. *Intended*: the transport is
 plumbing for backend implementers, and `mock_http_transport.h` is a test utility. Include them
@@ -706,7 +720,7 @@ specs into Anthropic JSON, parses the SSE stream) and `HttplibTransport` (moves 
 
 ## Part 8 — Scaffolding and workflows
 
-### `CMakeLists.txt` (root) · 148 lines
+### `CMakeLists.txt` (root) · 154 lines
 
 | Section | What | Why |
 |---|---|---|
@@ -714,7 +728,7 @@ specs into Anthropic JSON, parses the SSE stream) and `HttplibTransport` (moves 
 | `CORVUS_IS_TOP_LEVEL` | Detects whether corvus is the main project. | Tests default **on** only when top-level, so projects consuming corvus don't build our tests. |
 | Options | `CORVUS_BUILD_TESTS`, `CORVUS_BUILD_EXAMPLES` (off), `CORVUS_WITH_LLAMACPP` (reserved, Phase 2), `CORVUS_ENABLE_TLS` (on). | |
 | C++17, extensions off | `-std=c++17`, not `gnu++17`. | Portable code across GCC/Clang/MSVC. |
-| FetchContent: cpp-httplib v0.18.3, nlohmann/json v3.11.3 | Pinned tags, shallow clones, `SOURCE_SUBDIR do-not-configure`. | Download **sources only** and never run their CMake, so nothing of theirs enters our install. nlohmann/json is fetched now but first used in PR 2. |
+| FetchContent: cpp-httplib v0.65.0, nlohmann/json v3.11.3 | Release archives pinned by `URL_HASH SHA256=…`; `SOURCE_SUBDIR do-not-configure`; policy CMP0135 set to NEW. | **Hash, not tag:** a git tag can be moved to different code, a hash can't, so a compromised upstream can't silently change what we build. Archives are also faster than git clones. **Sources only:** we never run their CMake, so nothing of theirs enters our install. nlohmann/json is fetched now but first used in PR 2. To bump, change the URL's version and replace the hash with the new archive's `sha256sum`. |
 | `add_library(corvus …)` + `corvus::corvus` alias | The library target. | The alias gives the same name whether you use `add_subdirectory` or `find_package`. |
 | `PRIVATE` include dirs for third-party | httplib/json headers visible only to corvus's own `.cpp` files. | **This is where "public headers stay dependency-light" is enforced.** |
 | TLS block | If OpenSSL is found: define `CORVUS_HAS_TLS`, link SSL/Crypto; otherwise a warning, and https fails at runtime with a clear message. | HTTPS is optional so offline/local builds don't need OpenSSL. |
@@ -729,10 +743,11 @@ was built with TLS**. A static library's private dependencies are still needed a
 final link; without this, `find_package(corvus)` succeeds and the link then fails with cryptic
 OpenSSL symbol errors.
 
-### `tests/CMakeLists.txt` · 29 lines and `tests/test_main.cpp` · 2 lines
+### `tests/CMakeLists.txt` · 31 lines and `tests/test_main.cpp` · 2 lines
 
-- doctest v2.4.11 is fetched sources-only and wrapped in an `INTERFACE` target, because doctest's
-  own CMake declares a minimum version below 3.5, which CMake 4 refuses to process.
+- doctest v2.4.11 is fetched sources-only (archive pinned by SHA-256, like the root dependencies)
+  and wrapped in an `INTERFACE` target, because doctest's own CMake declares a minimum version
+  below 3.5, which CMake 4 refuses to process.
 - `corvus_tests` is one executable with every test file; `test_main.cpp` only defines
   `DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN`.
 - `CORVUS_PROJECT_VERSION` is passed in from CMake for the version-sync test.
@@ -741,7 +756,11 @@ OpenSSL symbol errors.
 
 Builds `mock_quickstart` when `-DCORVUS_BUILD_EXAMPLES=ON`. It runs offline.
 
-### `.github/workflows/ci.yml` · 70 lines
+### `.github/workflows/ci.yml` · 75 lines
+
+Runs with `permissions: contents: read` (least privilege), and every action is pinned by commit SHA
+with the version in a comment. A tag can be moved to different code; a SHA can't.
+[`.github/dependabot.yml`](../.github/dependabot.yml) proposes weekly bumps for those pins.
 
 | Job | What | Catches |
 |---|---|---|
@@ -755,12 +774,14 @@ Builds `mock_quickstart` when `-DCORVUS_BUILD_EXAMPLES=ON`. It runs offline.
 |---|---|---|
 | `.clang-format` | Google base, 4-space indent, 100 columns, left pointer alignment. | Yes: run `clang-format -i` on changed files. |
 | `.clang-tidy` | bugprone, cppcoreguidelines, modernize, performance, readability (minus a few noisy checks). | Recommended. |
+| `SECURITY.md` | How to report a vulnerability privately (GitHub advisories), response targets, scope, dependency pinning policy. | Read it before reporting a security bug. |
+| `.github/dependabot.yml` | Weekly bumps for the SHA-pinned GitHub Actions. Can't see the CMake archive pins, which are bumped by hand. | No. |
 | `.gitattributes` | Marks `*.html` as documentation for GitHub's language stats. | No. |
 | `.gitignore` | Build output, models, secrets, local AI-tool folders. | No. |
 | `install.ps1`, `skills-lock.json` | Maintainer's local AI-assistant tooling. | No; not part of the library. |
 | `ai-agent orchestration architecture.html` | The original long-form vision document. | Background reading only; the specs supersede it. |
 
-### Test suite map (57 cases)
+### Test suite map (63 cases)
 
 | File | Cases | What it pins |
 |---|---|---|
@@ -769,7 +790,7 @@ Builds `mock_quickstart` when `-DCORVUS_BUILD_EXAMPLES=ON`. It runs offline.
 | `test_schema.cpp` | 7 | Schema JSON shape and escaping, both `makeTool` forms, never-throw |
 | `test_args.cpp` | 6 | `Args` parsing, null-as-absent, strict getters, integer rules |
 | `test_typed_tool.cpp` | 10 | Schema derivation, binding, optional/defaults, range checks, both `run` forms, build-time errors, agent loop |
-| `test_transport_contract.cpp` | 13 | Mock/real transport contract (see Part 5) |
+| `test_transport_contract.cpp` | 19 | Mock/real transport contract and input guards (see Part 5) |
 | `test_version.cpp` | 1 | Header version macros equal the CMake version |
 
 ### Recipes
@@ -863,6 +884,12 @@ one message at a time) so the request prefix stays cacheable.
 | MockLLM empty queue returns sentinel text | [mock_llm.cpp L29](../src/mock_llm.cpp#L29) | Intended |
 | Cancel returns `"[cancelled]"`, not best-so-far | [agent.cpp L99](../src/agent.cpp#L99) | Intended for now |
 | Transport headers not in `corvus.h` | [corvus.h](../include/corvus/corvus.h) | Intended |
+| No cap on tool calls per turn/run or on observation size | [agent.cpp L136](../src/agent.cpp#L136) | Known gap → `feat/loop-guards` (planned) |
+| No way to deny a tool call before it runs (`onToolCall` only observes) | [agent.cpp L137](../src/agent.cpp#L137) | Known gap → `feat/loop-guards` (planned) |
+| Plain `http://` accepted for any host, so auth headers could go out in cleartext | [httplib_transport.cpp](../src/httplib_transport.cpp#L81) | Known gap → first client PR (keys arrive there) |
+| `readTimeout` is per read, with no total deadline; streamed 2xx bodies aren't size-capped here | [http_transport.h L24](../include/corvus/http_transport.h#L24) | Known gap → first client PR (httplib's `set_max_timeout` + an SSE accumulation cap) |
+| Header guard was CR/LF-only; URL path unchecked; errors echoed raw URL | [httplib_transport.cpp](../src/httplib_transport.cpp#L29) | **Fixed in `fix/transport-hardening`** |
+| Dependencies pinned by movable git tag; cpp-httplib v0.18.3 in range of published advisories | [CMakeLists.txt](../CMakeLists.txt#L30) | **Fixed in `fix/transport-hardening`** (v0.65.0, SHA-256 pins) |
 | `build()` twice threw on duplicate tools | [agent_builder.cpp](../src/agent_builder.cpp#L7) | **Fixed in PR #2** |
 | MockLLM ids could repeat | [mock_llm.cpp](../src/mock_llm.cpp) | **Fixed in PR #2** |
 | Strategy error promised ReAct "in Phase 1" | [agent_builder.cpp](../src/agent_builder.cpp#L7) | **Fixed in PR #2** |

@@ -203,7 +203,41 @@ TEST_CASE("default transport rejects userinfo in the authority without connectin
     r.url = "https://api.anthropic.com@evil.example/v1/messages";
     const auto resp = transport->post(r, nullptr, {});
     CHECK(resp.status == 0);
-    CHECK(resp.error == "invalid url: " + r.url);
+    // Userinfo is redacted in the error: it may be "user:password".
+    CHECK(resp.error == "invalid url: https://<redacted>@evil.example/v1/messages");
+
+    r.url = "https://user:hunter2@evil.example/";
+    const auto resp2 = transport->post(r, nullptr, {});
+    CHECK(resp2.error == "invalid url: https://<redacted>@evil.example/");
+}
+
+TEST_CASE("default transport rejects control bytes and spaces anywhere in the URL") {
+    const auto transport = defaultHttpTransport();
+    const std::vector<std::string> bad = {
+        "http://127.0.0.1:1/x\r\nHost: evil.example",  // request-line split
+        std::string("http://127.0.0.1:1/a\0b", 22),    // NUL would truncate the path
+        "http://127.0.0.1:1/a b",
+        "http://127.0.0.1:1/\x7f",
+    };
+    for (const auto& url : bad) {
+        HttpRequest r;
+        r.url = url;
+        const auto resp = transport->post(r, nullptr, {});
+        CHECK(resp.status == 0);
+        CHECK(resp.error.rfind("invalid url: ", 0) == 0);
+    }
+}
+
+TEST_CASE("invalid-url errors escape control bytes and redact the query") {
+    const auto transport = defaultHttpTransport();
+    HttpRequest r;
+    r.url = "http://127.0.0.1:1/x\r\ny";
+    auto resp = transport->post(r, nullptr, {});
+    CHECK(resp.error == "invalid url: http://127.0.0.1:1/x\\x0D\\x0Ay");  // no raw CR/LF in logs
+
+    r.url = "ftp://example.com/v1?key=SECRET#frag";
+    resp = transport->post(r, nullptr, {});
+    CHECK(resp.error == "invalid url: ftp://example.com/v1?<redacted>");
 }
 
 TEST_CASE("default transport rejects CR/LF in a header without connecting") {
@@ -213,7 +247,57 @@ TEST_CASE("default transport rejects CR/LF in a header without connecting") {
     r.headers = {{"x-api-key", "good\r\nHost: evil.example"}};
     const auto resp = transport->post(r, nullptr, {});
     CHECK(resp.status == 0);
-    CHECK(resp.error.rfind("invalid header", 0) == 0);
+    CHECK(resp.error == "invalid header value (control character): x-api-key");
+}
+
+TEST_CASE("default transport rejects any control byte in a header value, never echoing it") {
+    const auto transport = defaultHttpTransport();
+    for (const auto& value : {std::string("sk-secret\0x", 11), std::string("sk-secret\x01"),
+                              std::string("sk-secret\x7f")}) {
+        HttpRequest r;
+        r.url = "http://127.0.0.1:1/x";
+        r.headers = {{"x-api-key", value}};
+        const auto resp = transport->post(r, nullptr, {});
+        CHECK(resp.status == 0);
+        CHECK(resp.error == "invalid header value (control character): x-api-key");
+        CHECK(resp.error.find("sk-secret") == std::string::npos);
+    }
+}
+
+TEST_CASE("default transport rejects header names that are not RFC 9110 tokens") {
+    const auto transport = defaultHttpTransport();
+    for (const auto& name : {"", "x-a: injected", "bad name", "x\r\nHost", "x\x01"}) {
+        HttpRequest r;
+        r.url = "http://127.0.0.1:1/x";
+        r.headers = {{name, "v"}};
+        const auto resp = transport->post(r, nullptr, {});
+        CHECK(resp.status == 0);
+        CHECK(resp.error == "invalid header name");
+    }
+}
+
+TEST_CASE("a tab in a header value is valid and passes validation") {
+    const auto transport = defaultHttpTransport();
+    CancelToken token;
+    token.cancel();
+    HttpRequest r;
+    r.url = "http://127.0.0.1:1/x";
+    r.headers = {{"x-note", "a\tb"}};
+    // Validation runs before the pre-flight cancel, so "cancelled" proves the
+    // header was accepted — without opening a socket.
+    const auto resp = transport->post(r, nullptr, token);
+    CHECK(resp.error == "cancelled");
+}
+
+TEST_CASE("malformed input is reported even when the token is already cancelled") {
+    const auto transport = defaultHttpTransport();
+    CancelToken token;
+    token.cancel();
+    HttpRequest r;
+    r.url = "http://127.0.0.1:1/x";
+    r.headers = {{"x-a", "b\nc"}};
+    const auto resp = transport->post(r, nullptr, token);
+    CHECK(resp.error == "invalid header value (control character): x-a");
 }
 
 TEST_CASE("default transport fails fast when the token is already cancelled") {

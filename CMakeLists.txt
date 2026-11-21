@@ -29,20 +29,25 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # --- Third-party (header-only, fetched like doctest: sources only, no
 # add_subdirectory — keeps our install/export surface clean) ------------------
+# Pinned by archive SHA-256, not by git tag: a tag can be moved to different
+# code, a hash can't. To bump: change the version in the URL and replace the
+# hash with the new archive's sha256sum.
+if(POLICY CMP0135)
+  cmake_policy(SET CMP0135 NEW)  # extracted files get extraction-time mtimes
+endif()
 include(FetchContent)
 FetchContent_Declare(
   cpp_httplib
-  GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
-  GIT_TAG        v0.18.3
-  GIT_SHALLOW    TRUE
-  SOURCE_SUBDIR  do-not-configure
+  URL           https://github.com/yhirose/cpp-httplib/archive/refs/tags/v0.65.0.tar.gz
+  URL_HASH      SHA256=6fda8f23ff811a751c2b6e694fe2f1aa1625df53a317110329ef57a18f9fa5fb
+  SOURCE_SUBDIR do-not-configure
 )
 FetchContent_Declare(
   nlohmann_json
-  GIT_REPOSITORY https://github.com/nlohmann/json.git
-  GIT_TAG        v3.11.3
-  GIT_SHALLOW    TRUE
-  SOURCE_SUBDIR  do-not-configure
+  # The project's release asset; this hash matches the one in its release notes.
+  URL           https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
+  URL_HASH      SHA256=d6c65aca6b1ed68e7a182f4757257b107ae403032760ed6ef121c9d55e81757d
+  SOURCE_SUBDIR do-not-configure
 )
 FetchContent_MakeAvailable(cpp_httplib nlohmann_json)
 

@@ -1,0 +1,9 @@
+# Keeps the SHA-pinned GitHub Actions current. The C++ dependencies are pinned
+# by archive hash in CMakeLists.txt, which Dependabot can't read — those are
+# bumped by hand (see SECURITY.md).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

@@ -266,7 +266,10 @@ agents actually hit. ([memory spec, revised in place](specs/2026-07-04-memory-de
 
 ## Era 11 — Transport and supply-chain hardening (November 19, 2026)
 
-**Branch:** `fix/transport-hardening`. Commit linked on merge.
+**Commits:** `f9eab3b` ([PR #7](https://github.com/Ambar-Gupta22/corvus/pull/7)), macOS follow-up
+`b700d3e` ([PR #9](https://github.com/Ambar-Gupta22/corvus/pull/9)), and the first Dependabot bump
+`74653fd` ([PR #8](https://github.com/Ambar-Gupta22/corvus/pull/8): `actions/checkout` v4.4.0 →
+v7.0.1).
 
 **Goal.** A security review before the first real client found gaps that would turn into real
 vulnerabilities once model-influenced values and API keys reach the transport. Close the cheap,

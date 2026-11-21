@@ -720,7 +720,7 @@ specs into Anthropic JSON, parses the SSE stream) and `HttplibTransport` (moves 
 
 ## Part 8 — Scaffolding and workflows
 
-### `CMakeLists.txt` (root) · 154 lines
+### `CMakeLists.txt` (root) · 165 lines
 
 | Section | What | Why |
 |---|---|---|
@@ -733,6 +733,7 @@ specs into Anthropic JSON, parses the SSE stream) and `HttplibTransport` (moves 
 | `PRIVATE` include dirs for third-party | httplib/json headers visible only to corvus's own `.cpp` files. | **This is where "public headers stay dependency-light" is enforced.** |
 | TLS block | If OpenSSL is found: define `CORVUS_HAS_TLS`, link SSL/Crypto; otherwise a warning, and https fails at runtime with a clear message. | HTTPS is optional so offline/local builds don't need OpenSSL. |
 | `WIN32` | Link `ws2_32` (sockets) and `crypt32` (system certs, with TLS). | Required by cpp-httplib on Windows. |
+| `APPLE` + TLS | Link `CFNetwork`, `CoreFoundation`, `Security` frameworks. | cpp-httplib v0.65 loads root CAs from the macOS Keychain by default; without these the link fails (broke macOS CI after the v0.65 bump). Kept on because Homebrew OpenSSL may not see the system trust store. |
 | Warnings | `/W4` or `-Wall -Wextra -Wpedantic`, on corvus only. | Strict for our code, without imposing it on consumers. |
 | Install/export | Install the target + headers, export `corvusTargets` in namespace `corvus::`, generate `corvusConfig.cmake` + a version file (`SameMajorVersion`). | Makes `find_package(corvus)` work after `cmake --install`. |
 

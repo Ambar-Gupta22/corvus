@@ -103,6 +103,17 @@ if(WIN32)
   endif()
 endif()
 
+if(APPLE AND CORVUS_TLS_ENABLED)
+  # With TLS on macOS, cpp-httplib (as of the pinned v0.65) loads root CAs
+  # from the system Keychain by default, which needs these frameworks — the
+  # same set its own CMake links. Keeping Keychain loading on matters:
+  # Homebrew's OpenSSL may not see the system trust store, which would break
+  # certificate checks. Exported as link-only, so find_package consumers of
+  # the static library get them too.
+  target_link_libraries(corvus PRIVATE
+    "-framework CFNetwork" "-framework CoreFoundation" "-framework Security")
+endif()
+
 if(MSVC)
   target_compile_options(corvus PRIVATE /W4)
 else()

@@ -291,6 +291,11 @@ independent ones now, before any client code builds on them.
 7. **`SECURITY.md`**, moved up from Phase 5: private reporting via GitHub advisories, response
    targets, scope.
 
+**Follow-up (`fix/macos-tls-frameworks`).** On macOS with TLS, v0.65 loads root CAs from the
+Keychain by default, which needs the `CFNetwork`/`CoreFoundation`/`Security` frameworks. The PR's
+macOS CI job had been cancelled rather than run, so the missing link flags surfaced only on
+`main`. Lesson: don't merge with a matrix job cancelled; re-run it.
+
 6 new tests (63 cases total). Deferred on purpose: loop caps and a tool-call veto (public API, own
 PR `feat/loop-guards`), and cleartext-auth refusal, total deadline and streaming caps (they land
 with the first client, where keys and streaming arrive).

@@ -177,6 +177,24 @@ callbacks.onToolResult = [](const std::string& tool, const std::string& out) { l
 callbacks.onStep       = [](int iteration) { metrics.increment("agent.steps"); };
 ```
 
+### Stay in control of what the model does
+
+A tool gate sees every call before it runs and can refuse it. The model gets the reason and can adapt; the tool never executes:
+
+```cpp
+auto agent = AgentBuilder()
+    .withModel(model)
+    .withTool(moveTo)
+    .withToolGate([&](const ToolCall& call) {
+        if (call.name == "move_to" && !geofence.allows(call.arguments))
+            return ToolDecision::deny("target is outside the geofence");
+        return ToolDecision::allow();
+    })
+    .build();
+```
+
+Runs are bounded by default, whatever the model sends back: at most 16 tool calls per model response, 64 per run, and 64 KiB per tool result (long results keep their beginning and end). Each limit can be changed on the builder, and `RunResult` reports how many calls were executed, denied, or skipped.
+
 ### Test agents like normal code
 
 Agents are notoriously hard to test. In corvus every seam is mockable: `MockLLM` scripts the model turn by turn, and `MockHttpTransport` scripts the network byte by byte. Your agent tests run in milliseconds, offline, with no API keys and no flakiness:
@@ -250,6 +268,7 @@ sequenceDiagram
         A->>M: conversation + tool specs
         M-->>A: text and/or tool calls (tokens streamed to onToken)
         opt model asked for tools
+            Note over A: call limits + tool gate (skipped or denied calls still get a result)
             A->>T: execute(args, ToolContext)
             T-->>A: ToolResult, paired with its call id
         end
@@ -310,8 +329,8 @@ Framework first. Each phase goes spec → plan → build, and lands as reviewed,
   - [x] Mockable HTTP transport ([#1](https://github.com/Ambar-Gupta22/corvus/pull/1))
   - [x] Typed tools: `typedTool<T>` + `Args` ([#5](https://github.com/Ambar-Gupta22/corvus/pull/5))
   - [x] Transport + supply-chain hardening, SHA-256 dependency pins, [SECURITY.md](SECURITY.md) ([#7](https://github.com/Ambar-Gupta22/corvus/pull/7))
-  - [ ] Loop guards: tool-call caps + pre-execution veto ← *next*
-  - [ ] `AnthropicClient`: native tool-calling, SSE streaming, prompt caching, typed errors
+  - [x] Loop guards: tool-call caps, observation cap, pre-execution tool gate ([spec](docs/specs/2026-11-21-loop-guards-design.md))
+  - [ ] `AnthropicClient`: native tool-calling, SSE streaming, prompt caching, typed errors ← *next*
   - [ ] `OpenAIClient` (Chat Completions; also covers Ollama, vLLM, and OpenRouter via `baseUrl`)
   - [ ] Retries + backoff · per-tool timeout · SqliteMemory · memory trimming · usage/cost · Calculator + guarded HttpRequest tools
 - [ ] **Phase 2 — local-first:** Ollama + llama.cpp + GBNF, jailed file I/O, token-budget memory, Raspberry Pi offline demo + benchmarks

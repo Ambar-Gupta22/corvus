@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+#include <utility>
 #include <vector>
 
 #include "corvus/agent.h"
@@ -36,12 +38,43 @@ public:
         return *this;
     }
     AgentBuilder& withMaxIterations(int n) {
-        maxIterations_ = n;
+        limits_.maxIterations = n;
+        return *this;
+    }
+
+    // Loop limits (see AgentLimits). All have safe defaults; these tighten or
+    // raise them.
+    AgentBuilder& withMaxToolCallsPerTurn(int n) {
+        limits_.maxToolCallsPerTurn = n;
+        return *this;
+    }
+    AgentBuilder& withMaxToolCallsPerRun(int n) {
+        limits_.maxToolCallsPerRun = n;
+        return *this;
+    }
+    AgentBuilder& withMaxObservationBytes(std::size_t n) {
+        limits_.maxObservationBytes = n;
+        return *this;
+    }
+
+    // Optional tool gate (see ToolGate). A second call replaces the first.
+    AgentBuilder& withToolGate(ToolGate gate) {
+        gate_ = std::move(gate);
+        return *this;
+    }
+    AgentBuilder& withToolGate(SimpleToolGate gate) {
+        if (!gate) {
+            gate_ = nullptr;
+            return *this;
+        }
+        gate_ = [simple = std::move(gate)](const ToolCall& call, const CancelToken& /*cancel*/) {
+            return simple(call);
+        };
         return *this;
     }
 
     // Validates and assembles an Agent. Throws std::runtime_error if no model
-    // was set, the strategy isn't ToolCalling, or maxIterations < 1; throws
+    // was set, the strategy isn't ToolCalling, or any limit is < 1; throws
     // std::invalid_argument if a withTool() name collides with a different
     // tool already in the registry. Unset memory/registry get fresh defaults
     // per call, so building twice yields two independent agents.
@@ -53,7 +86,8 @@ private:
     MemoryPtr memory_;
     std::vector<ToolPtr> tools_;
     Strategy strategy_ = Strategy::ToolCalling;
-    int maxIterations_ = 10;
+    AgentLimits limits_;
+    ToolGate gate_;
 };
 
 }  // namespace corvus

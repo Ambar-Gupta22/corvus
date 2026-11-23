@@ -26,6 +26,19 @@ MockLLM& MockLLM::replyAndCallTool(std::string text, std::string toolName,
     return *this;
 }
 
+MockLLM& MockLLM::callTools(std::vector<std::pair<std::string, std::string>> calls) {
+    LLMResponse r;
+    for (auto& c : calls) {
+        ToolCall call;
+        call.id = "mock-call-" + std::to_string(nextId_++);
+        call.name = std::move(c.first);
+        call.arguments = std::move(c.second);
+        r.toolCalls.push_back(std::move(call));
+    }
+    queue_.push_back(std::move(r));
+    return *this;
+}
+
 LLMResponse MockLLM::complete(const std::vector<Message>& /*messages*/,
                               const std::vector<ToolSpec>& /*tools*/,
                               const TokenCallback& onToken) {

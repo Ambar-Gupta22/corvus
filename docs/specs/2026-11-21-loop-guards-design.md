@@ -1,7 +1,7 @@
 # Loop guards — design spec
 
 **Date:** 2026-11-21
-**Status:** Awaiting approval
+**Status:** Approved 2026-11-23
 **Scope:** `feat/loop-guards` — bounded tool fan-out per turn and per run, a bounded observation
 size, and a pre-execution **tool gate** that can deny a call before it runs.
 **Out of scope:** per-tool timeout (`feat/per-tool-timeout`), per-call schema validation
@@ -96,6 +96,11 @@ auto agent = corvus::AgentBuilder()
      the token, or a cancelled run waits on them forever. Cancel during a gate: the gate returns
      whatever it returns; the loop's existing iteration-start check then stops the run.
 
+   The gate is **optional**: the developer sets it when building the agent; the model can never
+   set, see or change it. With no gate, every call that passes the caps and exists is allowed (as
+   today); the limits in decision 1 apply either way. Requiring a gate would break the 12-line
+   quickstart, which is why the gate is opt-in while the limits are opt-out.
+
    One gate per agent; a second `withToolGate` replaces the first (compose in user code if you
    need several). The gate runs on the run's thread (the worker thread for `runAsync`), so like
    callbacks it must be thread-safe if shared between agents.
@@ -119,7 +124,8 @@ auto agent = corvus::AgentBuilder()
    `maxObservationBytes`. Cut points move back to a UTF-8 code-point boundary, so truncation never
    produces invalid UTF-8 (the clients' JSON serializer would reject it). The cap applies to the
    rendered observation, so `onToolResult` and memory see exactly what the model sees. If the cap
-   is too small to hold the marker plus any content, the observation is the marker alone.
+   is too small to hold the marker plus any content, the observation is the marker alone (the one
+   case where the result can exceed a pathologically small cap, by at most the marker's length).
 
 9. **`Agent` constructor stays source-compatible.** The current 5-argument constructor is kept
    (it delegates). A new one takes `AgentLimits` + `ToolGate`:

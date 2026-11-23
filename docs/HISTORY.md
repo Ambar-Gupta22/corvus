@@ -305,6 +305,34 @@ with the first client, where keys and streaming arrive).
 
 ---
 
+## Era 12 — Loop guards (November 21–23, 2026)
+
+**Branch:** `feat/loop-guards`. Commit linked on merge.
+([spec](specs/2026-11-21-loop-guards-design.md))
+
+**Goal.** Before the first real client, keep the loop bounded and controllable whatever the model
+sends back. `maxIterations` bounded turns but not calls: one response could request thousands of
+tool calls, one tool result could be 50 MB, and nothing could stop a call before it ran.
+
+**Key decisions and why**
+- **Limits on by default** (`AgentLimits`): 16 calls per model response, 64 per run, 64 KiB per
+  observation. Users raise them; nobody has to remember to set them.
+- **Every requested call gets exactly one paired result.** Skipped, denied and unknown calls get an
+  `ERROR: …` observation instead of being dropped, because providers reject an unanswered call.
+- **Tool gate on the builder, not in per-run callbacks**, so it can't be forgotten on one run. It
+  fails closed (a throwing gate denies, and its exception text never reaches the model), and a
+  cancel-aware form lets a gate that waits on a human stop when the run is cancelled.
+- **Head + tail truncation, UTF-8 safe**, because errors and conclusions sit at the end of tool
+  output, and invalid UTF-8 would break the clients' JSON serialization.
+- **No new `ToolResult` status;** `RunResult` gains four counters instead. The original 5-argument
+  `Agent` constructor is kept, so nothing breaks.
+- The Phase 4 `ToolPolicy` is to be built **on** the gate, keeping one denial path in the loop.
+
+18 new tests (81 cases total). `MockLLM` gained `callTools(...)` to script one turn with several
+calls.
+
+---
+
 ## What's next
 
 The remaining Phase 1 branches (Anthropic and OpenAI clients, retries, per-tool timeout, SQLite

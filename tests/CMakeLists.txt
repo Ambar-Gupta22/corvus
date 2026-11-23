@@ -22,6 +22,7 @@ add_executable(corvus_tests
   test_typed_tool.cpp
   test_registry.cpp
   test_agent.cpp
+  test_loop_guards.cpp
   test_transport_contract.cpp
   test_version.cpp
 )

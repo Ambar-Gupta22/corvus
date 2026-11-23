@@ -13,8 +13,17 @@ Agent AgentBuilder::build() {
             "corvus: only Strategy::ToolCalling is implemented; ReAct and PlanAndExecute are not "
             "available yet");
     }
-    if (maxIterations_ < 1) {
+    if (limits_.maxIterations < 1) {
         throw std::runtime_error("corvus: maxIterations must be >= 1");
+    }
+    if (limits_.maxToolCallsPerTurn < 1) {
+        throw std::runtime_error("corvus: maxToolCallsPerTurn must be >= 1");
+    }
+    if (limits_.maxToolCallsPerRun < 1) {
+        throw std::runtime_error("corvus: maxToolCallsPerRun must be >= 1");
+    }
+    if (limits_.maxObservationBytes < 1) {
+        throw std::runtime_error("corvus: maxObservationBytes must be >= 1");
     }
     // Defaults are locals, never written back to the builder: each build()
     // without an explicit memory/registry yields an independent agent, and a
@@ -33,7 +42,7 @@ Agent AgentBuilder::build() {
         registry->registerTool(tool);
     }
 
-    return Agent(llm_, registry, memory, strategy_, maxIterations_);
+    return Agent(llm_, registry, memory, strategy_, limits_, gate_);
 }
 
 }  // namespace corvus

@@ -356,19 +356,20 @@ Phase 1 — use MockLLM for now"*. **Why stub instead of omit:** the library lin
 quickstart compiles, and the failure is a clear message rather than a linker error. Replaced by
 `feat/anthropic-client` and `feat/openai-client`.
 
-### `include/corvus/mock_llm.h` + `src/mock_llm.cpp` · 44 + 48 lines · since Phase 0
+### `include/corvus/mock_llm.h` + `src/mock_llm.cpp` · 49 + 61 lines · since Phase 0
 
 **Role.** A scripted fake model: the backbone of the offline test suite and the quickstart example.
 
 | Symbol | What | Why |
 |---|---|---|
-| [`reply(text)`](../include/corvus/mock_llm.h#L23) | Queue a final answer. | |
-| [`callTool(name, argsJson)`](../include/corvus/mock_llm.h#L26) | Queue a turn requesting one tool. | |
-| [`replyAndCallTool(text, name, argsJson)`](../include/corvus/mock_llm.h#L30) | Queue text *and* a tool call. | Lets tests cover "model narrates before acting" (e.g. the early-stop text path). |
-| [`complete(...)`](../include/corvus/mock_llm.h#L35) → [impl](../src/mock_llm.cpp#L29) | Pops the next queued turn; ignores `messages`/`tools`; sends the whole text to `onToken` as **one** chunk. | Determinism: the same script always gives the same run. |
+| [`reply(text)`](../include/corvus/mock_llm.h#L24) | Queue a final answer. | |
+| [`callTool(name, argsJson)`](../include/corvus/mock_llm.h#L27) | Queue a turn requesting one tool. | |
+| [`replyAndCallTool(text, name, argsJson)`](../include/corvus/mock_llm.h#L31) | Queue text *and* a tool call. | Lets tests cover "model narrates before acting" (e.g. the early-stop text path). |
+| [`callTools({{name, argsJson}, …})`](../include/corvus/mock_llm.h#L35) → [impl](../src/mock_llm.cpp#L29) | Queue **one** turn requesting several tools, in order. | Real models emit parallel calls; the loop-guard per-turn cap can't be tested without it (added in `feat/loop-guards`). |
+| [`complete(...)`](../include/corvus/mock_llm.h#L40) → [impl](../src/mock_llm.cpp#L42) | Pops the next queued turn; ignores `messages`/`tools`; sends the whole text to `onToken` as **one** chunk. | Determinism: the same script always gives the same run. |
 | `nextId_` | Counter behind the ids `"mock-call-0"`, `"mock-call-1"`, … | Unique ids let tests check that results are paired with requests. |
 
-All three queueing methods return `MockLLM&`, so scripts chain:
+All four queueing methods return `MockLLM&`, so scripts chain:
 `mock->callTool("calc", "{}").reply("done")`.
 
 **Sharp edges**
@@ -510,25 +511,29 @@ directly when you need them.
 
 ## Part 6 — The loop
 
-### `include/corvus/agent.h` + `src/agent.cpp` · 82 + 173 lines
+### `include/corvus/agent.h` + `src/agent.cpp` · 124 + 268 lines
 
 **Role.** The reasoning loop that ties model, tools, and memory together. This is the one unit that
-knows about all the others.
+knows about all the others. Since `feat/loop-guards` it also keeps the run bounded and controllable
+whatever the model sends back ([spec](specs/2026-11-21-loop-guards-design.md)).
 
 **Public types**
 
 | Symbol | What | Why |
 |---|---|---|
-| [`AgentCallbacks`](../include/corvus/agent.h#L19) | Optional `onToken`, `onToolCall`, `onToolResult(tool, observation)`, `onStep(iteration)`. | Observer pattern: stream to a UI, log, or trace without the loop knowing about any of them. `onStep` doubles as the tracing seam. |
-| [`RunResult`](../include/corvus/agent.h#L27) | `output`, `iterations`, `completed`. | See the exit cases below. |
-| [`Agent`](../include/corvus/agent.h#L45) | A **handle** to shared `State`. | Copying an `Agent` gives a second handle to the *same* agent and conversation, not a clone. |
-| [`Agent(...)` constructor](../include/corvus/agent.h#L49) | Stores the collaborators in a fresh `State`. | Trusts its inputs; `AgentBuilder` does the validation. |
-| [`run(task, callbacks)`](../include/corvus/agent.h#L55) → [impl](../src/agent.cpp#L58) | Blocking; runs on the caller's thread with a never-fired token. | Simplest usage. |
-| [`runAsync(task, token, callbacks)`](../include/corvus/agent.h#L61) → [impl](../src/agent.cpp#L63) | Starts `runImpl` via `std::async(launch::async)`, returns the `future`. | Non-blocking for ROS2/game threads. |
-| [`State`](../include/corvus/agent.h#L67) | llm, registry, memory, strategy, maxIterations, `atomic<bool> running`. | Kept in a `shared_ptr` so an in-flight run can own it. |
+| [`AgentCallbacks`](../include/corvus/agent.h#L21) | Optional `onToken`, `onToolCall`, `onToolResult(tool, observation)`, `onStep(iteration)`. `onToolCall` fires for **every** requested call before any check; `onToolResult` fires for every call with the final (possibly skipped/denied/truncated) observation. | Observer pattern: stream to a UI, log, or trace without the loop knowing about any of them. One result event per call, always. `onStep` doubles as the tracing seam. |
+| [`RunResult`](../include/corvus/agent.h#L31) | `output`, `iterations`, `completed`, plus `toolCallsExecuted`, `toolCallsDenied`, `toolCallsSkipped`, `observationsTruncated`. | See the exit cases below. The counters make limit hits and denials observable without parsing observation text. |
+| [`ToolDecision`](../include/corvus/agent.h#L42) | `allow()` / `deny(reason)`. | A gate's verdict. The reason goes to the model verbatim, so it must not hold secrets. |
+| [`SimpleToolGate` / `ToolGate`](../include/corvus/agent.h#L57) | `ToolDecision(const ToolCall&)` and the cancel-aware `ToolDecision(const ToolCall&, const CancelToken&)`. | Developer code that can veto a call before it runs (geofence, confirmation, human approval). The cancel-aware form lets a blocking gate stop waiting when the run is cancelled. Optional: no gate = allow all. |
+| [`AgentLimits`](../include/corvus/agent.h#L64) | `maxIterations` (10), `maxToolCallsPerTurn` (16), `maxToolCallsPerRun` (64), `maxObservationBytes` (64 KiB). | Bounds on one run, on by default. Grouped so the constructor doesn't grow a parameter per limit. |
+| [`Agent`](../include/corvus/agent.h#L83) | A **handle** to shared `State`. | Copying an `Agent` gives a second handle to the *same* agent and conversation, not a clone. |
+| [`Agent(...)` constructors](../include/corvus/agent.h#L88) | The original 5-argument form (default limits apart from `maxIterations`) and `(…, AgentLimits, ToolGate = nullptr)`. | Trust their inputs; `AgentBuilder` does the validation. The old form stays so direct constructor users keep compiling. |
+| [`run(task, callbacks)`](../include/corvus/agent.h#L96) → [impl](../src/agent.cpp#L120) | Blocking; runs on the caller's thread with a never-fired token. | Simplest usage. |
+| [`runAsync(task, token, callbacks)`](../include/corvus/agent.h#L102) → [impl](../src/agent.cpp#L125) | Starts `runImpl` via `std::async(launch::async)`, returns the `future`. | Non-blocking for ROS2/game threads. |
+| [`State`](../include/corvus/agent.h#L108) | llm, registry, memory, strategy, `limits`, `gate`, `atomic<bool> running`. | Kept in a `shared_ptr` so an in-flight run can own it. |
 
 **Why `runAsync` copies everything into the lambda.** The lambda
-[captures `state`, `task`, `token`, `callbacks` by value](../src/agent.cpp#L69). The run therefore
+[captures `state`, `task`, `token`, `callbacks` by value](../src/agent.cpp#L131). The run therefore
 owns everything it touches: you can destroy or move the `Agent` object while the future is pending,
 and nothing dangles. Capturing `this` would crash in exactly that case.
 
@@ -536,33 +541,44 @@ and nothing dangles. Capturing `this` would crash in exactly that case.
 
 | Symbol | What | Why |
 |---|---|---|
-| [`RunningGuard`](../src/agent.cpp#L11) | Constructor does `running.exchange(true)` and throws `logic_error` if it was already true; destructor stores false. | Enforces **one run at a time**; RAII releases the slot on every exit path, including exceptions. `exchange` makes "check and claim" a single atomic step, with no race window. |
-| [`renderObservation`](../src/agent.cpp#L31) | `Ok` → content as-is; `Timeout` → `"ERROR: tool timed out[: …]"`; `Cancelled` → `"ERROR: tool cancelled[: …]"`; retryable/fatal → `"ERROR: " + content`. | The status is for the loop; the model gets consistent text. |
+| [`RunningGuard`](../src/agent.cpp#L13) | Constructor does `running.exchange(true)` and throws `logic_error` if it was already true; destructor stores false. | Enforces **one run at a time**; RAII releases the slot on every exit path, including exceptions. `exchange` makes "check and claim" a single atomic step, with no race window. |
+| [`renderObservation`](../src/agent.cpp#L33) | `Ok` → content as-is; `Timeout` → `"ERROR: tool timed out[: …]"`; `Cancelled` → `"ERROR: tool cancelled[: …]"`; retryable/fatal → `"ERROR: " + content`. | The status is for the loop; the model gets consistent text. |
+| [`capObservation`](../src/agent.cpp#L59) | Over-cap text → head + `\n[...truncated N bytes...]\n` + tail, within the cap; cut points moved to UTF-8 code-point boundaries. A cap too small for the marker yields the marker alone. | Errors and conclusions usually sit at the end of tool output. Invalid UTF-8 would make the clients' JSON serializer throw. The marker is budgeted at its longest possible length, so the real one always fits. |
+| [`decide`](../src/agent.cpp#L85) | Runs the gate; no gate → allow; a throwing gate → `deny("tool gate failed")`. | **Fails closed**, and the exception text (possibly internal detail) never reaches the model. |
 
-**`runImpl`, step by step** ([source](../src/agent.cpp#L74))
+**`runImpl`, step by step** ([source](../src/agent.cpp#L136))
 
-1. **Claim the run slot** with `RunningGuard` ([L76](../src/agent.cpp#L76)). A concurrent run
+1. **Claim the run slot** with `RunningGuard` ([L138](../src/agent.cpp#L138)). A concurrent run
    throws here; for `runAsync`, the exception surfaces at `future.get()`.
 2. **Snapshot tool specs once** from `registry->all()`. The toolset is fixed for the run, so the
    model sees a consistent list and the work isn't redone each iteration.
 3. **Append the user's task** to memory.
-4. **Loop** up to `maxIterations` ([L98](../src/agent.cpp#L98)):
+4. **Loop** up to `maxIterations` ([L163](../src/agent.cpp#L163)):
    1. **Cancelled?** → return `output = "[cancelled]"`, `completed = false`.
    2. Record `iterations = i + 1`; call `onStep`.
-   3. **Ask the model:** `llm->complete(memory->context(), specs, onToken)` ([L111](../src/agent.cpp#L111)).
-   4. **No tool calls → done** ([L114](../src/agent.cpp#L114)): append the assistant answer to
+   3. **Ask the model:** `llm->complete(memory->context(), specs, onToken)` ([L176](../src/agent.cpp#L176)).
+   4. **No tool calls → done** ([L179](../src/agent.cpp#L179)): append the assistant answer to
       memory, return `completed = true`.
    5. **Otherwise record the assistant turn *with* its `toolCalls`**, even if its text is empty
-      ([L130](../src/agent.cpp#L130)). Providers reject a tool result whose request is missing from
+      ([L192](../src/agent.cpp#L192)). Providers reject a tool result whose request is missing from
       history. Non-empty text is kept as "best answer so far".
-   6. **For each tool call:** `onToolCall` → build a `ToolContext` (with the run's cancel token) →
-      look the tool up ([L146](../src/agent.cpp#L146)); if it's missing, use
-      `fatal("unknown tool '…'")` so the model can correct itself → `execute` →
-      `renderObservation` → `onToolResult` → append a `tool` turn carrying `toolCallId = call.id`
-      ([L160](../src/agent.cpp#L160)).
+   6. **For each tool call** ([L204](../src/agent.cpp#L204)), in request order: `onToolCall`, then
+      the checks in this fixed order:
+      - beyond `maxToolCallsPerTurn` in this response → `skipped: per-turn tool call limit (N) reached`;
+      - the run already processed `maxToolCallsPerRun` calls → `skipped: per-run tool call limit (N) reached`;
+      - otherwise the call counts against the run budget, and: tool missing →
+        `unknown tool '…'` ([L223](../src/agent.cpp#L223)); gate denies → `denied[: reason]`
+        ([L227](../src/agent.cpp#L227)); else build a `ToolContext` (with the run's cancel token)
+        and `execute`.
+
+      All of these are `FatalError` results. Then `renderObservation` → `capObservation`
+      ([L244](../src/agent.cpp#L244)) → `onToolResult` → append a `tool` turn carrying
+      `toolCallId = call.id` ([L255](../src/agent.cpp#L255)). **Every requested call gets exactly
+      one paired result**, skipped and denied ones included: providers reject an unanswered call.
 5. **Cap reached** (the loop guard against runaway models): `completed = false`, and `output` is the
    last assistant text, or `"[stopped: reached maxIterations]"` if there was none
-   ([L168](../src/agent.cpp#L168)).
+   ([L263](../src/agent.cpp#L263)). An exhausted per-run budget does **not** end the run: later
+   calls are skipped with a message telling the model why, so it can still answer.
 
 ```mermaid
 flowchart TD
@@ -576,7 +592,7 @@ flowchart TD
     F --> G{tool calls?}
     G -- no --> X["append answer<br/>completed=true"]
     G -- yes --> H[append assistant turn + toolCalls]
-    H --> I[for each call: lookup, execute, render, append tool turn]
+    H --> I["for each call: caps, lookup, gate, execute,<br/>render, cap size, append tool turn"]
     I --> D
 ```
 
@@ -601,7 +617,17 @@ flowchart TD
 | Tool calls within one turn run sequentially. | Known gap → Phase 4 parallel execution |
 | A cancel returns `"[cancelled]"` even if earlier assistant text existed. | Intended for now; could return best-so-far like the cap case |
 | An exception thrown by `llm->complete()` propagates out of `run()` / `future.get()`. The guard still releases the slot. | Intended; Phase 1 clients define a typed `LLMError` |
-| Callbacks from `runAsync` run on the worker thread. | Intended; make them thread-safe |
+| Callbacks from `runAsync` run on the worker thread. | Intended; make them thread-safe. The same applies to a tool gate shared between agents. |
+| A deny reason is shown to the model verbatim. | Intended; don't put secrets in it (a throwing gate's exception text, by contrast, is never shown) |
+| After a cancel, the remaining calls of the current turn are still processed; the cancel takes effect at the next iteration. | Known gap → `feat/per-tool-timeout` (cancel also checked between calls) |
+| `withToolGate(nullptr)` is ambiguous between the two overloads. | Intended; to clear a gate, don't set one (or pass `ToolGate{}`) |
+
+**Tests that pin it** (`test_loop_guards.cpp`, 18 cases): per-turn and per-run caps (paired
+results, request order, budget spanning turns, unknown/denied calls counted), default limits,
+gate allow/deny/empty reason/fail-closed/replacement, gate invoked only for runnable calls,
+cancel-aware gate, one callback pair per requested call, observation cap (exact marker count,
+UTF-8 boundaries, marker-only, unchanged under cap, what memory stores), limit validation, and the
+original 5-argument constructor.
 
 **Tests that pin it** (`test_agent.cpp`): "agent runs a tool call then returns the final answer",
 "unknown tool yields an error observation but the loop continues", "max-iterations guard stops a
@@ -614,24 +640,28 @@ runAsync calls on one agent both complete".
 
 ---
 
-### `include/corvus/agent_builder.h` + `src/agent_builder.cpp` · 59 + 39 lines
+### `include/corvus/agent_builder.h` + `src/agent_builder.cpp` · 93 + 48 lines
 
 **Role.** The public face of the API: fluent construction with fail-fast validation.
 
 | Symbol | What | Why |
 |---|---|---|
-| `withModel` / `withTool` / `withRegistry` / `withMemory` / `withStrategy` / `withMaxIterations` ([L18–L41](../include/corvus/agent_builder.h#L18)) | Store the setting; return `*this`. | Chaining. `withTool` can be called many times. |
-| [`build()`](../include/corvus/agent_builder.h#L48) → [impl](../src/agent_builder.cpp#L7) | Validate, fill defaults, register tools, construct. | One place where bad configuration is caught, with a clear message, *before* anything runs. |
+| `withModel` / `withTool` / `withRegistry` / `withMemory` / `withStrategy` / `withMaxIterations` ([L20](../include/corvus/agent_builder.h#L20)) | Store the setting; return `*this`. | Chaining. `withTool` can be called many times. |
+| `withMaxToolCallsPerTurn` / `withMaxToolCallsPerRun` / `withMaxObservationBytes` ([L47](../include/corvus/agent_builder.h#L47)) | Override one `AgentLimits` field. | Limits are on by default; these tighten or raise them. |
+| [`withToolGate(ToolGate)`](../include/corvus/agent_builder.h#L61) / [`withToolGate(SimpleToolGate)`](../include/corvus/agent_builder.h#L65) | Set the optional gate; the simple form is wrapped into the cancel-aware one. A second call replaces the first. | The gate is agent config, not a per-run callback: a safety check passed per run is one forgotten argument away from not running. Overloads resolve by lambda arity, like `makeTool`. |
+| [`build()`](../include/corvus/agent_builder.h#L81) → [impl](../src/agent_builder.cpp#L7) | Validate, fill defaults, register tools, construct. | One place where bad configuration is caught, with a clear message, *before* anything runs. |
 
 **`build()` in order**
 1. No model → `runtime_error("withModel() is required…")`.
 2. Strategy isn't `ToolCalling` → `runtime_error("only Strategy::ToolCalling is implemented…")`.
-3. `maxIterations < 1` → `runtime_error`.
+3. Any limit `< 1` (`maxIterations`, `maxToolCallsPerTurn`, `maxToolCallsPerRun`,
+   `maxObservationBytes`) → `runtime_error` naming the limit.
 4. Memory and registry default to **fresh local objects** when unset; they are never written back
    to the builder.
 5. Register each `withTool` tool. If the registry already holds *that exact tool object*, skip it;
    a *different* tool under the same name still throws `invalid_argument` (anti-shadowing).
-6. Construct the `Agent`. Defaults: `ToolCalling`, `maxIterations = 10`.
+6. Construct the `Agent` with the limits and gate. Defaults: `ToolCalling`, the `AgentLimits`
+   defaults, no gate.
 
 **Why step 4 matters (fixed in PR #2).** Before, the first `build()` stored its default registry in
 the builder, and a second `build()` re-registered the same tools into it, which threw. Now each
@@ -646,7 +676,9 @@ the builder, and a second `build()` re-registered the same tools into it, which 
 
 **Tests that pin it:** "build() validates its inputs", "build() twice on one builder yields
 independent agents", "default memory is not shared between agents from one builder", "repeated
-build() with a shared registry keeps anti-shadowing".
+build() with a shared registry keeps anti-shadowing", and in `test_loop_guards.cpp` "build()
+rejects limits below 1", "default limits are on: 20 calls in one turn run only 16", "a second
+withToolGate replaces the first".
 
 ---
 
@@ -782,11 +814,12 @@ with the version in a comment. A tag can be moved to different code; a SHA can't
 | `install.ps1`, `skills-lock.json` | Maintainer's local AI-assistant tooling. | No; not part of the library. |
 | `ai-agent orchestration architecture.html` | The original long-form vision document. | Background reading only; the specs supersede it. |
 
-### Test suite map (63 cases)
+### Test suite map (81 cases)
 
 | File | Cases | What it pins |
 |---|---|---|
 | `test_agent.cpp` | 16 | Loop behavior, transcript shape, builder validation and independence, MockLLM ids, async/cancel/overlap/lifetime |
+| `test_loop_guards.cpp` | 18 | Per-turn/per-run caps, tool gate (deny, fail closed, cancel-aware), callbacks per call, observation cap (UTF-8 safe), limit validation, constructor compatibility (see Part 6) |
 | `test_registry.cpp` | 4 | Register/find/list, duplicate rejection, `Replace`, null rejection |
 | `test_schema.cpp` | 7 | Schema JSON shape and escaping, both `makeTool` forms, never-throw |
 | `test_args.cpp` | 6 | `Args` parsing, null-as-absent, strict getters, integer rules |
@@ -872,21 +905,22 @@ one message at a time) so the request prefix stays cacheable.
 
 | Edge | Where | Status |
 |---|---|---|
-| Cancel not passed into `llm->complete()` | [agent.cpp L111](../src/agent.cpp#L111) | Known gap → `feat/anthropic-client` |
-| Retryable treated as fatal | [agent.cpp L31](../src/agent.cpp#L31) | Known gap → `feat/retries-backoff` |
-| `ToolContext::deadline` never set | [agent.cpp L141](../src/agent.cpp#L141) | Known gap → `feat/per-tool-timeout` |
+| Cancel not passed into `llm->complete()` | [agent.cpp L176](../src/agent.cpp#L176) | Known gap → `feat/anthropic-client` |
+| Retryable treated as fatal | [agent.cpp L33](../src/agent.cpp#L33) | Known gap → `feat/retries-backoff` |
+| `ToolContext::deadline` never set | [agent.cpp L233](../src/agent.cpp#L233) | Known gap → `feat/per-tool-timeout` |
 | Memory unbounded | [memory.h L30](../include/corvus/memory.h#L30) | Known gap → `feat/memory-trim-backstop` |
-| Memory writes not atomic per exchange | [agent.cpp L93](../src/agent.cpp#L93), [L131](../src/agent.cpp#L131) | Known gap → `feat/anthropic-client` |
+| Memory writes not atomic per exchange | [agent.cpp L155](../src/agent.cpp#L155), [L196](../src/agent.cpp#L196) | Known gap → `feat/anthropic-client` |
 | No system prompt | [agent_builder.h](../include/corvus/agent_builder.h) | Known gap → `feat/anthropic-client` |
 | No factories for `Timeout`/`Cancelled` results | [types.h L62](../include/corvus/types.h#L62) | Known gap → `feat/per-tool-timeout` |
 | Schema is flat only (so are typed tools) | [schema.h L14](../include/corvus/schema.h#L14) | Known gap (open decision 4) |
-| Tool calls in one turn run sequentially | [agent.cpp L136](../src/agent.cpp#L136) | Known gap → Phase 4 |
-| MockLLM doesn't record requests | [mock_llm.h L18](../include/corvus/mock_llm.h#L18) | Candidate improvement |
-| MockLLM empty queue returns sentinel text | [mock_llm.cpp L29](../src/mock_llm.cpp#L29) | Intended |
-| Cancel returns `"[cancelled]"`, not best-so-far | [agent.cpp L99](../src/agent.cpp#L99) | Intended for now |
+| Tool calls in one turn run sequentially | [agent.cpp L204](../src/agent.cpp#L204) | Known gap → Phase 4 |
+| MockLLM doesn't record requests | [mock_llm.h L19](../include/corvus/mock_llm.h#L19) | Candidate improvement |
+| MockLLM empty queue returns sentinel text | [mock_llm.cpp L45](../src/mock_llm.cpp#L45) | Intended |
+| Cancel returns `"[cancelled]"`, not best-so-far | [agent.cpp L164](../src/agent.cpp#L164) | Intended for now |
 | Transport headers not in `corvus.h` | [corvus.h](../include/corvus/corvus.h) | Intended |
-| No cap on tool calls per turn/run or on observation size | [agent.cpp L136](../src/agent.cpp#L136) | Known gap → `feat/loop-guards` (planned) |
-| No way to deny a tool call before it runs (`onToolCall` only observes) | [agent.cpp L137](../src/agent.cpp#L137) | Known gap → `feat/loop-guards` (planned) |
+| No cap on tool calls per turn/run or on observation size | [agent.cpp L204](../src/agent.cpp#L204) | **Fixed in `feat/loop-guards`** (`AgentLimits`, on by default) |
+| No way to deny a tool call before it runs (`onToolCall` only observes) | [agent.cpp L227](../src/agent.cpp#L227) | **Fixed in `feat/loop-guards`** (`withToolGate`, fails closed) |
+| Cancel takes effect only at the next iteration; remaining calls of the turn still run | [agent.cpp L204](../src/agent.cpp#L204) | Known gap → `feat/per-tool-timeout` |
 | Plain `http://` accepted for any host, so auth headers could go out in cleartext | [httplib_transport.cpp](../src/httplib_transport.cpp#L81) | Known gap → first client PR (keys arrive there) |
 | `readTimeout` is per read, with no total deadline; streamed 2xx bodies aren't size-capped here | [http_transport.h L24](../include/corvus/http_transport.h#L24) | Known gap → first client PR (httplib's `set_max_timeout` + an SSE accumulation cap) |
 | Header guard was CR/LF-only; URL path unchecked; errors echoed raw URL | [httplib_transport.cpp](../src/httplib_transport.cpp#L29) | **Fixed in `fix/transport-hardening`** |
@@ -901,13 +935,13 @@ one message at a time) so the request prefix stays cacheable.
 | Pattern | Location |
 |---|---|
 | Strategy | [`LLMClient`](../include/corvus/llm_client.h#L31), [`Memory`](../include/corvus/memory.h#L15), [`HttpTransport`](../include/corvus/http_transport.h#L43), [`Strategy`](../include/corvus/strategy.h#L10) |
-| Builder | [`AgentBuilder`](../include/corvus/agent_builder.h#L16) |
+| Builder | [`AgentBuilder`](../include/corvus/agent_builder.h#L18) |
 | Command | [`Tool::execute`](../include/corvus/tool.h#L38) |
 | Registry | [`ToolRegistry`](../include/corvus/tool_registry.h#L21) |
-| Observer | [`AgentCallbacks`](../include/corvus/agent.h#L19) |
-| Template Method | [`Agent::runImpl`](../src/agent.cpp#L74) |
+| Observer | [`AgentCallbacks`](../include/corvus/agent.h#L21) |
+| Template Method | [`Agent::runImpl`](../src/agent.cpp#L136) |
 | Adapter | [`FunctionTool`](../include/corvus/tool.h#L49) (a `std::function` adapted to `Tool`) |
-| Seam + Test Double | [`MockLLM`](../include/corvus/mock_llm.h#L18), [`MockHttpTransport`](../include/corvus/mock_http_transport.h#L18) |
-| RAII guard | [`RunningGuard`](../src/agent.cpp#L11) |
-| Handle / shared state | [`Agent::State`](../include/corvus/agent.h#L67) |
+| Seam + Test Double | [`MockLLM`](../include/corvus/mock_llm.h#L19), [`MockHttpTransport`](../include/corvus/mock_http_transport.h#L18) |
+| RAII guard | [`RunningGuard`](../src/agent.cpp#L13) |
+| Handle / shared state | [`Agent::State`](../include/corvus/agent.h#L108) |
 | Factory function | [`inMemory()`](../include/corvus/memory.h#L42), [`defaultHttpTransport()`](../include/corvus/http_transport.h#L64), [`makeTool`](../include/corvus/tool.h#L86) |

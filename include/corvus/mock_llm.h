@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <deque>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "corvus/llm_client.h"
@@ -28,6 +29,10 @@ public:
     // Queue a turn that returns text AND asks for a tool call (models often
     // narrate before acting) — lets tests exercise mid-run assistant text.
     MockLLM& replyAndCallTool(std::string text, std::string toolName, std::string argumentsJson);
+
+    // Queue one turn that asks for several tool calls at once, in order.
+    // Each pair is {toolName, argumentsJson}.
+    MockLLM& callTools(std::vector<std::pair<std::string, std::string>> calls);
 
     // Pops the next queued turn, ignoring `messages` and `tools`. Its text (if
     // any) is sent to onToken as one chunk. An empty queue returns the text

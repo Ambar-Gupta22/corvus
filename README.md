@@ -329,7 +329,7 @@ Framework first. Each phase goes spec → plan → build, and lands as reviewed,
   - [x] Mockable HTTP transport ([#1](https://github.com/Ambar-Gupta22/corvus/pull/1))
   - [x] Typed tools: `typedTool<T>` + `Args` ([#5](https://github.com/Ambar-Gupta22/corvus/pull/5))
   - [x] Transport + supply-chain hardening, SHA-256 dependency pins, [SECURITY.md](SECURITY.md) ([#7](https://github.com/Ambar-Gupta22/corvus/pull/7))
-  - [x] Loop guards: tool-call caps, observation cap, pre-execution tool gate ([spec](docs/specs/2026-11-21-loop-guards-design.md))
+  - [x] Loop guards: tool-call caps, observation cap, pre-execution tool gate ([#10](https://github.com/Ambar-Gupta22/corvus/pull/10))
   - [ ] `AnthropicClient`: native tool-calling, SSE streaming, prompt caching, typed errors ← *next*
   - [ ] `OpenAIClient` (Chat Completions; also covers Ollama, vLLM, and OpenRouter via `baseUrl`)
   - [ ] Retries + backoff · per-tool timeout · SqliteMemory · memory trimming · usage/cost · Calculator + guarded HttpRequest tools

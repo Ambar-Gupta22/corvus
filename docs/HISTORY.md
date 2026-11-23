@@ -307,7 +307,7 @@ with the first client, where keys and streaming arrive).
 
 ## Era 12 — Loop guards (November 21–23, 2026)
 
-**Branch:** `feat/loop-guards`. Commit linked on merge.
+**Commit:** `337db79` ([PR #10](https://github.com/Ambar-Gupta22/corvus/pull/10)).
 ([spec](specs/2026-11-21-loop-guards-design.md))
 
 **Goal.** Before the first real client, keep the loop bounded and controllable whatever the model

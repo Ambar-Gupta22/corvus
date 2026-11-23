@@ -918,13 +918,13 @@ one message at a time) so the request prefix stays cacheable.
 | MockLLM empty queue returns sentinel text | [mock_llm.cpp L45](../src/mock_llm.cpp#L45) | Intended |
 | Cancel returns `"[cancelled]"`, not best-so-far | [agent.cpp L164](../src/agent.cpp#L164) | Intended for now |
 | Transport headers not in `corvus.h` | [corvus.h](../include/corvus/corvus.h) | Intended |
-| No cap on tool calls per turn/run or on observation size | [agent.cpp L204](../src/agent.cpp#L204) | **Fixed in `feat/loop-guards`** (`AgentLimits`, on by default) |
-| No way to deny a tool call before it runs (`onToolCall` only observes) | [agent.cpp L227](../src/agent.cpp#L227) | **Fixed in `feat/loop-guards`** (`withToolGate`, fails closed) |
+| No cap on tool calls per turn/run or on observation size | [agent.cpp L204](../src/agent.cpp#L204) | **Fixed in PR #10** (`AgentLimits`, on by default) |
+| No way to deny a tool call before it runs (`onToolCall` only observes) | [agent.cpp L227](../src/agent.cpp#L227) | **Fixed in PR #10** (`withToolGate`, fails closed) |
 | Cancel takes effect only at the next iteration; remaining calls of the turn still run | [agent.cpp L204](../src/agent.cpp#L204) | Known gap → `feat/per-tool-timeout` |
 | Plain `http://` accepted for any host, so auth headers could go out in cleartext | [httplib_transport.cpp](../src/httplib_transport.cpp#L81) | Known gap → first client PR (keys arrive there) |
 | `readTimeout` is per read, with no total deadline; streamed 2xx bodies aren't size-capped here | [http_transport.h L24](../include/corvus/http_transport.h#L24) | Known gap → first client PR (httplib's `set_max_timeout` + an SSE accumulation cap) |
-| Header guard was CR/LF-only; URL path unchecked; errors echoed raw URL | [httplib_transport.cpp](../src/httplib_transport.cpp#L29) | **Fixed in `fix/transport-hardening`** |
-| Dependencies pinned by movable git tag; cpp-httplib v0.18.3 in range of published advisories | [CMakeLists.txt](../CMakeLists.txt#L30) | **Fixed in `fix/transport-hardening`** (v0.65.0, SHA-256 pins) |
+| Header guard was CR/LF-only; URL path unchecked; errors echoed raw URL | [httplib_transport.cpp](../src/httplib_transport.cpp#L29) | **Fixed in PR #7** |
+| Dependencies pinned by movable git tag; cpp-httplib v0.18.3 in range of published advisories | [CMakeLists.txt](../CMakeLists.txt#L30) | **Fixed in PR #7** (v0.65.0, SHA-256 pins) |
 | `build()` twice threw on duplicate tools | [agent_builder.cpp](../src/agent_builder.cpp#L7) | **Fixed in PR #2** |
 | MockLLM ids could repeat | [mock_llm.cpp](../src/mock_llm.cpp) | **Fixed in PR #2** |
 | Strategy error promised ReAct "in Phase 1" | [agent_builder.cpp](../src/agent_builder.cpp#L7) | **Fixed in PR #2** |
